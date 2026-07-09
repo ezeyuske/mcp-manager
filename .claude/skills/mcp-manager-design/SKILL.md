@@ -61,6 +61,20 @@ Runtime (en `:root`, fuera de `@theme` porque se reescriben):
 Los 9 acentos (azul, verde, amarillo, naranja, rojo, magenta, violeta, cian,
 coral) viven en `ACCENTS` en `src/types/theme.ts`.
 
+**Colores de estado** (semánticos, FIJOS — NO siguen el acento; en `:root`):
+
+| Token | Uso |
+|-------|-----|
+| `--state-ok` / `--state-ok-glow` | verde: MCP sano, app detectada, dot OK |
+| `--state-warn` | amarillo: advertencia (ej. error leyendo config de una app) |
+| `--state-danger` / `--state-danger-glow` | rojo: dot/estado roto (comando no encontrado) |
+| `--state-danger-text` | texto/ícono danger sobre fondo oscuro |
+| `--state-danger-soft` | fondo tenue de tags/cards danger |
+
+Regla: los colores de estado también se usan SIEMPRE vía estos tokens, nunca
+como hex literal en un componente (igual que el acento). La única diferencia es
+que no cambian en runtime.
+
 ## Reglas visuales
 
 - **Fondo**: nunca negro puro. Gradiente navy + dos halos radiales sutiles

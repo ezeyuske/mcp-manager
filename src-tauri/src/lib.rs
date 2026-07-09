@@ -1,7 +1,9 @@
-#[tauri::command]
-fn detect_platform() -> String {
-    std::env::consts::OS.to_string()
-}
+mod adapters;
+mod commands;
+mod domain;
+mod error;
+
+use commands::get_inventory;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,7 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![detect_platform])
+        .invoke_handler(tauri::generate_handler![get_inventory])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

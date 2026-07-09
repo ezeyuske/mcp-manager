@@ -8,21 +8,22 @@ import {
   Settings,
   type LucideIcon,
 } from "lucide-react";
+import { useMemo } from "react";
 import { useUI } from "../store/ui";
+import { useInventory } from "../store/inventory";
+import { unify } from "../types/inventory";
 import type { Screen } from "../types/nav";
 
 interface NavItem {
   screen: Screen;
   label: string;
   icon: LucideIcon;
-  /** Badge numérico (0 u omitido = sin badge). Placeholder hasta Fase 2. */
-  badge?: number;
 }
 
 const NAV: NavItem[] = [
-  { screen: "mcps", label: "MCP Servers", icon: Plug, badge: 12 },
-  { screen: "skills", label: "Skills", icon: Sparkles, badge: 5 },
-  { screen: "projects", label: "Proyectos", icon: FolderGit2, badge: 3 },
+  { screen: "mcps", label: "MCP Servers", icon: Plug },
+  { screen: "skills", label: "Skills", icon: Sparkles },
+  { screen: "projects", label: "Proyectos", icon: FolderGit2 },
   { screen: "env", label: "Env & Secrets", icon: KeyRound },
   { screen: "activity", label: "Actividad", icon: ScrollText },
   { screen: "themes", label: "Themes", icon: Palette },
@@ -32,6 +33,13 @@ const NAV: NavItem[] = [
 export function Sidebar() {
   const screen = useUI((s) => s.screen);
   const setScreen = useUI((s) => s.setScreen);
+  const installations = useInventory((s) => s.inventory?.installations);
+
+  // Badge de MCPs = cantidad real de MCP unificados (por nombre).
+  const badges = useMemo<Partial<Record<Screen, number>>>(
+    () => ({ mcps: installations ? unify(installations).length : undefined }),
+    [installations],
+  );
 
   return (
     <aside className="flex h-full w-[248px] shrink-0 flex-col gap-1 border-r border-[var(--line)] bg-[rgba(255,255,255,0.02)] p-3">
@@ -57,6 +65,7 @@ export function Sidebar() {
         {NAV.map((item) => {
           const active = item.screen === screen;
           const Icon = item.icon;
+          const badge = badges[item.screen];
           return (
             <button
               key={item.screen}
@@ -86,7 +95,7 @@ export function Sidebar() {
                 className="shrink-0"
               />
               <span className="flex-1 text-left">{item.label}</span>
-              {item.badge ? (
+              {badge ? (
                 <span
                   className="flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums"
                   style={
@@ -101,7 +110,7 @@ export function Sidebar() {
                         }
                   }
                 >
-                  {item.badge}
+                  {badge}
                 </span>
               ) : null}
             </button>

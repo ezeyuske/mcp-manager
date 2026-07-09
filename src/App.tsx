@@ -11,6 +11,7 @@ import {
 } from "./screens";
 import { useUI } from "./store/ui";
 import { useTheme } from "./store/theme";
+import { useInventory } from "./store/inventory";
 import type { Screen } from "./types/nav";
 
 const SCREENS: Record<Screen, ComponentType> = {
@@ -26,9 +27,13 @@ const SCREENS: Record<Screen, ComponentType> = {
 function App() {
   const screen = useUI((s) => s.screen);
   const hydrate = useTheme((s) => s.hydrate);
+  const loadInventory = useInventory((s) => s.load);
 
-  // Aplica el acento guardado al montar.
-  useEffect(() => hydrate(), [hydrate]);
+  // Aplica el acento guardado y carga el inventario al montar.
+  useEffect(() => {
+    hydrate();
+    loadInventory();
+  }, [hydrate, loadInventory]);
 
   const Active = SCREENS[screen];
 

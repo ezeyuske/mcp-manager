@@ -56,6 +56,15 @@
   --accent-contrast: #1a0f0d; /* texto sobre botón coral */
   --accent-glow: rgba(255, 111, 97, 0.5);
   --accent-soft: rgba(255, 111, 97, 0.14); /* fondos tenues (sidebar activo) */
+
+  /* Colores de estado (semánticos, FIJOS — no siguen el acento) */
+  --state-ok: #33c98a;
+  --state-ok-glow: rgba(51, 201, 138, 0.53);
+  --state-warn: #f2c14e;
+  --state-danger: #f2555a;
+  --state-danger-text: #ff9a9e; /* texto/ícono sobre fondo oscuro */
+  --state-danger-glow: rgba(242, 85, 90, 0.53);
+  --state-danger-soft: rgba(242, 85, 90, 0.14); /* fondos tenues danger */
 }
 
 /* ---- Base --------------------------------------------------------------- */

@@ -23,6 +23,8 @@ dist-ssr
 
 # Playwright MCP session artifacts (screenshots/snapshots from ui-reviewer runs)
 .playwright-mcp/
+# Screenshots que a veces caen en la raíz durante reviews de UI
+/*.png
 *.suo
 *.ntvs*
 *.njsproj
