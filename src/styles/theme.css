@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — CSS-first (Tailwind v4 @theme).
+ * Fase 0: placeholder mínimo para validar que Tailwind compila.
+ * Los tokens completos del design system se definen en Fase 1.
+ */
+@theme {
+  --color-bg-from: #171d2b;
+  --color-bg-to: #1e2536;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: radial-gradient(
+    circle at 50% 0%,
+    var(--color-bg-to),
+    var(--color-bg-from)
+  );
+  color: #f4f6fb;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
