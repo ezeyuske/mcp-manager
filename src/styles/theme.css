@@ -1,20 +1,64 @@
 @import "tailwindcss";
 
-/*
- * Design tokens — CSS-first (Tailwind v4 @theme).
- * Fase 0: placeholder mínimo para validar que Tailwind compila.
- * Los tokens completos del design system se definen en Fase 1.
- */
+/* ============================================================================
+ * MCP Manager — Design System (CSS-first, Tailwind v4 @theme)
+ * Dark glassmórfico premium · acento configurable en runtime.
+ * Fuente de verdad: .claude/skills/mcp-manager-design/SKILL.md
+ * ==========================================================================*/
+
 @theme {
+  /* Superficies / fondo */
   --color-bg-from: #171d2b;
   --color-bg-to: #1e2536;
+  --color-surface: #1c2333; /* card base */
+  --color-surface-2: #222b3d; /* elevado (inputs, selects) */
+  --color-surface-3: #2a3346; /* hover elevado */
+  --color-track: #3a4254; /* estado off (toggle/slider) */
+
+  /* Texto */
+  --color-ink: #f4f6fb; /* primario */
+  --color-ink-soft: #c7cedd; /* secundario claro */
+  --color-muted: #8a93a6; /* secundario / subtítulos */
+  --color-faint: #5c6577; /* helper / disabled */
+
+  /* Tipografía */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+
+  /* Radios */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+
+  /* Easing / duración */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 150ms;
+  --dur: 200ms;
+  --dur-slow: 250ms;
 }
 
+/* ---- Tokens runtime (no en @theme: se reescriben en caliente) ------------ */
 :root {
   color-scheme: dark;
+
+  /* Bordes / líneas (glass) */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  /* Sombra profunda difusa de tarjetas flotantes */
+  --shadow-card: 0 18px 40px -12px rgba(0, 0, 0, 0.55),
+    0 2px 8px -2px rgba(0, 0, 0, 0.4);
+
+  /* ACENTO — configurable en runtime (default: coral). Nunca hardcodear. */
+  --accent: #ff6f61;
+  --accent-strong: #ff7a6b;
+  --accent-contrast: #1a0f0d; /* texto sobre botón coral */
+  --accent-glow: rgba(255, 111, 97, 0.5);
+  --accent-soft: rgba(255, 111, 97, 0.14); /* fondos tenues (sidebar activo) */
 }
 
+/* ---- Base --------------------------------------------------------------- */
 html,
 body,
 #root {
@@ -24,12 +68,117 @@ body,
 body {
   margin: 0;
   font-family: var(--font-sans);
-  background: radial-gradient(
-    circle at 50% 0%,
-    var(--color-bg-to),
-    var(--color-bg-from)
-  );
-  color: #f4f6fb;
+  color: var(--color-ink);
+  background-color: var(--color-bg-from);
+  /* Atmósfera: mesh sutil de dos halos fríos sobre el navy */
+  background-image: radial-gradient(
+      120% 80% at 15% -10%,
+      rgba(80, 102, 160, 0.16),
+      transparent 60%
+    ),
+    radial-gradient(
+      90% 70% at 100% 0%,
+      rgba(255, 111, 97, 0.06),
+      transparent 55%
+    ),
+    linear-gradient(160deg, var(--color-bg-from), var(--color-bg-to));
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Foco visible accesible, teñido por el acento */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--color-ink);
+}
+
+/* Scrollbars discretos */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-track) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-track);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* ---- Utilidades del design system --------------------------------------- */
+
+/* Tarjeta glass flotante */
+.ds-card {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-surface) 92%, white 8%),
+    var(--color-surface)
+  );
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+}
+
+/* Glow del acento (elementos activos/primarios) */
+.ds-glow {
+  box-shadow: 0 0 18px var(--accent-glow);
+}
+
+/* Slider: thumb circular con glow del acento */
+.ds-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.ds-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+.ds-slider::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* Reveal escalonado en carga */
+@keyframes ds-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ds-rise {
+  animation: ds-rise var(--dur-slow) var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }

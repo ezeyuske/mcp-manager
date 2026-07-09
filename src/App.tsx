@@ -1,30 +1,44 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, type ComponentType } from "react";
+import { Sidebar } from "./components";
+import {
+  McpsScreen,
+  SkillsScreen,
+  ProjectsScreen,
+  EnvSecretsScreen,
+  ActivityScreen,
+  ThemesScreen,
+  SettingsScreen,
+} from "./screens";
+import { useUI } from "./store/ui";
+import { useTheme } from "./store/theme";
+import type { Screen } from "./types/nav";
 
-/**
- * Fase 0: shell mínimo. Invoca `detect_platform` una vez al montar para
- * confirmar que el pipeline IPC (Tauri commands + plugins) levanta OK.
- * En Fase 1 este componente se reemplaza por el shell con Sidebar + screens.
- */
+const SCREENS: Record<Screen, ComponentType> = {
+  mcps: McpsScreen,
+  skills: SkillsScreen,
+  projects: ProjectsScreen,
+  env: EnvSecretsScreen,
+  activity: ActivityScreen,
+  themes: ThemesScreen,
+  settings: SettingsScreen,
+};
+
 function App() {
-  const [platform, setPlatform] = useState<string>("…");
+  const screen = useUI((s) => s.screen);
+  const hydrate = useTheme((s) => s.hydrate);
 
-  useEffect(() => {
-    invoke<string>("detect_platform")
-      .then(setPlatform)
-      .catch((err) => setPlatform(`error: ${String(err)}`));
-  }, []);
+  // Aplica el acento guardado al montar.
+  useEffect(() => hydrate(), [hydrate]);
+
+  const Active = SCREENS[screen];
 
   return (
-    <main className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center">
-      <h1 className="text-2xl font-semibold tracking-tight">MCP Manager</h1>
-      <p className="text-sm text-slate-400">
-        Fase 0 — Tailwind v4 activo · plugins Tauri wireados
-      </p>
-      <p className="text-xs text-slate-500">
-        platform: <span className="font-mono text-slate-300">{platform}</span>
-      </p>
-    </main>
+    <div className="flex h-screen w-screen overflow-hidden">
+      <Sidebar />
+      <main className="min-w-0 flex-1 overflow-hidden">
+        <Active key={screen} />
+      </main>
+    </div>
   );
 }
 
