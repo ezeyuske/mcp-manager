@@ -11,6 +11,8 @@ import {
 import { useMemo } from "react";
 import { useUI } from "../store/ui";
 import { useInventory } from "../store/inventory";
+import { useSkills } from "../store/skills";
+import { useProjects } from "../store/projects";
 import { unify } from "../types/inventory";
 import type { Screen } from "../types/nav";
 
@@ -34,11 +36,17 @@ export function Sidebar() {
   const screen = useUI((s) => s.screen);
   const setScreen = useUI((s) => s.setScreen);
   const installations = useInventory((s) => s.inventory?.installations);
+  const skillsCount = useSkills((s) => s.skills.length);
+  const projectsCount = useProjects((s) => s.projects.length);
 
-  // Badge de MCPs = cantidad real de MCP unificados (por nombre).
+  // Badges con conteos reales (undefined = sin badge).
   const badges = useMemo<Partial<Record<Screen, number>>>(
-    () => ({ mcps: installations ? unify(installations).length : undefined }),
-    [installations],
+    () => ({
+      mcps: installations ? unify(installations).length : undefined,
+      skills: skillsCount || undefined,
+      projects: projectsCount || undefined,
+    }),
+    [installations, skillsCount, projectsCount],
   );
 
   return (

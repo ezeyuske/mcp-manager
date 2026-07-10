@@ -234,6 +234,34 @@ pub fn register_project_dir(path: String) -> Result<(), String> {
     projects::register(&path).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn unregister_project(path: String) -> Result<(), String> {
+    projects::unregister(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_projects() -> Result<Vec<String>, String> {
+    projects::list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_skills() -> Result<Vec<crate::skills::Skill>, String> {
+    crate::skills::read_skills().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_skill_enabled(
+    target: crate::skills::SkillTarget,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::skills::set_skill_enabled(&target, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_skill(target: crate::skills::SkillTarget) -> Result<(), String> {
+    crate::skills::delete_skill(&target).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------
 // Comandos del vault de secrets. Los VALORES nunca cruzan hacia el
 // frontend salvo en `vault_reveal` (bajo demanda explícita del usuario).

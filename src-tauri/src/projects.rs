@@ -59,6 +59,17 @@ pub fn list() -> Result<Vec<String>, WriteError> {
     read_all_at(&projects_file()?)
 }
 
+fn unregister_at(path: &Path, project_path: &str) -> Result<(), WriteError> {
+    let mut paths = read_all_at(path)?;
+    paths.retain(|p| p != project_path);
+    write_all_at(path, &paths)
+}
+
+/// Quita un directorio de proyecto de `~/.mcp-manager/projects.json`.
+pub fn unregister(project_path: &str) -> Result<(), WriteError> {
+    unregister_at(&projects_file()?, project_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

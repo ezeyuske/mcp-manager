@@ -12,6 +12,8 @@ import {
 import { useUI } from "./store/ui";
 import { useTheme } from "./store/theme";
 import { useInventory } from "./store/inventory";
+import { useSkills } from "./store/skills";
+import { useProjects } from "./store/projects";
 import type { Screen } from "./types/nav";
 
 const SCREENS: Record<Screen, ComponentType> = {
@@ -28,12 +30,17 @@ function App() {
   const screen = useUI((s) => s.screen);
   const hydrate = useTheme((s) => s.hydrate);
   const loadInventory = useInventory((s) => s.load);
+  const loadSkills = useSkills((s) => s.load);
+  const loadProjects = useProjects((s) => s.load);
 
-  // Aplica el acento guardado y carga el inventario al montar.
+  // Aplica el acento guardado y carga inventario/skills/proyectos al montar
+  // (para poblar los badges del sidebar antes de visitar cada pantalla).
   useEffect(() => {
     hydrate();
     loadInventory();
-  }, [hydrate, loadInventory]);
+    loadSkills();
+    loadProjects();
+  }, [hydrate, loadInventory, loadSkills, loadProjects]);
 
   const Active = SCREENS[screen];
 
