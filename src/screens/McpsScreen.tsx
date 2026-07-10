@@ -7,14 +7,22 @@ import {
   RefreshCw,
   AlertTriangle,
   PlugZap,
+  Pencil,
+  CopyPlus,
+  ArrowLeftRight,
+  Trash2,
 } from "lucide-react";
 import { ScreenShell } from "./ScreenShell";
-import { SegmentedControl } from "../components";
+import { McpFormModal } from "./mcp/McpFormModal";
+import { SegmentedControl, Toggle, Modal, Button, Input } from "../components";
 import { useInventory } from "../store/inventory";
+import { useMutations } from "../store/mutations";
 import {
   APP_LABEL,
+  targetOf,
   unify,
   type AppId,
+  type McpInstallation,
   type TransportKind,
   type UnifiedMcp,
 } from "../types/inventory";
@@ -26,9 +34,17 @@ const TRANSPORT_ICON: Record<TransportKind, typeof Terminal> = {
   unknown: PlugZap,
 };
 
+type Dialog =
+  | { kind: "add" }
+  | { kind: "edit"; inst: McpInstallation }
+  | { kind: "delete"; inst: McpInstallation }
+  | { kind: "duplicate"; inst: McpInstallation }
+  | null;
+
 export function McpsScreen() {
   const { status, inventory, error, mocked, load } = useInventory();
   const [filter, setFilter] = useState<"all" | AppId>("all");
+  const [dialog, setDialog] = useState<Dialog>(null);
 
   useEffect(() => {
     if (status === "idle") load();
@@ -38,7 +54,6 @@ export function McpsScreen() {
     () => unify(inventory?.installations ?? []),
     [inventory],
   );
-
   const visible = useMemo(
     () =>
       filter === "all"
@@ -62,23 +77,13 @@ export function McpsScreen() {
               className={status === "loading" ? "animate-spin" : ""}
             />
           </IconButton>
-          <button
-            disabled
-            title="Disponible en Fase 3"
-            className="flex items-center gap-2 rounded-[var(--radius-sm)] px-4 py-2.5 text-[13px] font-semibold opacity-50"
-            style={{
-              background: "var(--accent)",
-              color: "var(--accent-contrast)",
-              boxShadow: "0 0 18px var(--accent-glow)",
-            }}
-          >
+          <Button onClick={() => setDialog({ kind: "add" })}>
             <Plus size={16} strokeWidth={2.5} />
             Agregar MCP
-          </button>
+          </Button>
         </div>
       }
     >
-      {/* Apps detectadas */}
       <div className="mb-5 flex flex-wrap gap-2.5">
         {(inventory?.apps ?? []).map((app) => (
           <div
@@ -132,7 +137,7 @@ export function McpsScreen() {
         <StateCard
           icon={PlugZap}
           title="Sin MCP servers"
-          detail="No se encontraron MCP configurados en las apps detectadas."
+          detail="Agregá tu primer MCP con el botón de arriba."
         />
       )}
 
@@ -145,10 +150,7 @@ export function McpsScreen() {
               onChange={setFilter}
               options={[
                 { value: "all" as const, label: "Todas" },
-                ...installedApps.map((a) => ({
-                  value: a.id,
-                  label: a.label,
-                })),
+                ...installedApps.map((a) => ({ value: a.id, label: a.label })),
               ]}
             />
             <span className="text-[12px] text-faint">
@@ -164,7 +166,13 @@ export function McpsScreen() {
 
           <div className="flex flex-col gap-2.5">
             {visible.map((mcp) => (
-              <McpRow key={mcp.name} mcp={mcp} />
+              <McpCard
+                key={mcp.name}
+                mcp={mcp}
+                onEdit={(inst) => setDialog({ kind: "edit", inst })}
+                onDelete={(inst) => setDialog({ kind: "delete", inst })}
+                onDuplicate={(inst) => setDialog({ kind: "duplicate", inst })}
+              />
             ))}
           </div>
         </>
@@ -172,76 +180,273 @@ export function McpsScreen() {
 
       {mocked && (
         <p className="mt-6 text-center text-[12px] text-faint">
-          Datos de muestra (modo browser). En la app real se leen los configs
-          vía el backend.
+          Datos de muestra (modo browser). En la app real se leen y escriben los
+          configs vía el backend.
         </p>
+      )}
+
+      <McpFormModal
+        open={dialog?.kind === "add" || dialog?.kind === "edit"}
+        onClose={() => setDialog(null)}
+        initial={dialog?.kind === "edit" ? dialog.inst : null}
+      />
+      {dialog?.kind === "delete" && (
+        <DeleteDialog inst={dialog.inst} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === "duplicate" && (
+        <DuplicateDialog inst={dialog.inst} onClose={() => setDialog(null)} />
       )}
     </ScreenShell>
   );
 }
 
-function McpRow({ mcp }: { mcp: UnifiedMcp }) {
+function McpCard({
+  mcp,
+  onEdit,
+  onDelete,
+  onDuplicate,
+}: {
+  mcp: UnifiedMcp;
+  onEdit: (i: McpInstallation) => void;
+  onDelete: (i: McpInstallation) => void;
+  onDuplicate: (i: McpInstallation) => void;
+}) {
   const Icon = TRANSPORT_ICON[mcp.transport];
-  const scopes = [...new Set(mcp.installations.map((i) => i.scope))];
-  const envKeys = [...new Set(mcp.installations.flatMap((i) => i.envKeys))];
-
   return (
-    <div className="ds-card flex items-center gap-4 !rounded-[var(--radius-md)] px-4 py-3.5">
-      <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[var(--line)]"
-        style={{ background: "var(--color-surface-2)" }}
-      >
-        <Icon size={18} className="text-ink-soft" />
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[14px] font-semibold text-ink">{mcp.name}</span>
-          <Tag>{mcp.transport}</Tag>
-          {scopes.map((s) => (
-            <Tag key={s}>{s}</Tag>
-          ))}
-          {envKeys.length > 0 && (
-            <Tag>
-              {envKeys.length} env{envKeys.length === 1 ? "" : "s"}
-            </Tag>
-          )}
-          {mcp.broken && <Tag tone="danger">comando no encontrado</Tag>}
+    <div className="ds-card !rounded-[var(--radius-md)] px-4 py-3.5">
+      <div className="flex items-center gap-4">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[var(--line)]"
+          style={{ background: "var(--color-surface-2)" }}
+        >
+          <Icon size={18} className="text-ink-soft" />
         </div>
-        <div className="mt-0.5 truncate font-mono text-[12px] text-faint">
-          {mcp.target}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1">
-          {mcp.apps.map((a) => (
-            <span
-              key={a}
-              className="rounded-full border border-[var(--line)] px-2 py-0.5 text-[10.5px] font-medium text-muted"
-              style={{ background: "var(--color-surface-2)" }}
-            >
-              {APP_LABEL[a]}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[14px] font-semibold text-ink">
+              {mcp.name}
             </span>
-          ))}
+            <Tag>{mcp.transport}</Tag>
+            {mcp.broken && <Tag tone="danger">comando no encontrado</Tag>}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[12px] text-faint">
+            {mcp.target}
+          </div>
         </div>
-        <StatusDot broken={mcp.broken} />
+      </div>
+
+      <div className="mt-3 flex flex-col divide-y divide-[var(--line)] border-t border-[var(--line)]">
+        {mcp.installations.map((inst) => (
+          <InstallationRow
+            key={`${inst.app}:${inst.scope}:${inst.projectPath ?? ""}`}
+            inst={inst}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onDuplicate={onDuplicate}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
-function StatusDot({ broken }: { broken: boolean }) {
+function InstallationRow({
+  inst,
+  onEdit,
+  onDelete,
+  onDuplicate,
+}: {
+  inst: McpInstallation;
+  onEdit: (i: McpInstallation) => void;
+  onDelete: (i: McpInstallation) => void;
+  onDuplicate: (i: McpInstallation) => void;
+}) {
+  const setEnabled = useMutations((s) => s.setEnabled);
+  const copy = useMutations((s) => s.copy);
+
+  const otherApp: AppId =
+    inst.app === "claude-desktop" ? "claude-code" : "claude-desktop";
+
+  return (
+    <div className="flex items-center gap-3 py-2.5 first:pt-3">
+      <StatusDot status={inst.status} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[12.5px] font-medium text-ink-soft">
+            {APP_LABEL[inst.app]}
+          </span>
+          <Tag>{inst.scope}</Tag>
+          {inst.envKeys.length > 0 && (
+            <Tag>
+              {inst.envKeys.length} env{inst.envKeys.length === 1 ? "" : "s"}
+            </Tag>
+          )}
+          {!inst.enabled && <Tag>deshabilitado</Tag>}
+        </div>
+        {inst.projectPath && (
+          <div className="mt-0.5 truncate font-mono text-[11px] text-faint">
+            {inst.projectPath}
+          </div>
+        )}
+      </div>
+
+      <Toggle
+        checked={inst.enabled}
+        onChange={(v) => setEnabled(targetOf(inst), v)}
+        label={`${inst.enabled ? "Deshabilitar" : "Habilitar"} ${inst.name}`}
+      />
+      <RowAction label="Editar" onClick={() => onEdit(inst)}>
+        <Pencil size={15} />
+      </RowAction>
+      <RowAction label="Duplicar" onClick={() => onDuplicate(inst)}>
+        <CopyPlus size={15} />
+      </RowAction>
+      <RowAction
+        label={`Copiar a ${APP_LABEL[otherApp]}`}
+        onClick={() => copy(targetOf(inst), otherApp, "user", null)}
+      >
+        <ArrowLeftRight size={15} />
+      </RowAction>
+      <RowAction label="Eliminar" danger onClick={() => onDelete(inst)}>
+        <Trash2 size={15} />
+      </RowAction>
+    </div>
+  );
+}
+
+function DeleteDialog({
+  inst,
+  onClose,
+}: {
+  inst: McpInstallation;
+  onClose: () => void;
+}) {
+  const remove = useMutations((s) => s.remove);
+  const busy = useMutations((s) => s.busy);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Eliminar ${inst.name}`}
+      subtitle={`De ${APP_LABEL[inst.app]} · ${inst.scope}`}
+      width={440}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={async () => {
+              const ok = await remove(targetOf(inst));
+              if (ok) onClose();
+            }}
+          >
+            Eliminar
+          </Button>
+        </>
+      }
+    >
+      <p className="text-[13px] leading-relaxed text-muted">
+        Se quitará la entrada de{" "}
+        <span className="font-mono text-ink-soft">{inst.configPath}</span>. Se
+        crea un backup antes de escribir; podés restaurarlo desde Actividad.
+      </p>
+    </Modal>
+  );
+}
+
+function DuplicateDialog({
+  inst,
+  onClose,
+}: {
+  inst: McpInstallation;
+  onClose: () => void;
+}) {
+  const duplicate = useMutations((s) => s.duplicate);
+  const busy = useMutations((s) => s.busy);
+  const [newName, setNewName] = useState(`${inst.name}-copy`);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Duplicar ${inst.name}`}
+      width={440}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={busy || newName.trim() === "" || newName === inst.name}
+            onClick={async () => {
+              const ok = await duplicate(targetOf(inst), newName.trim());
+              if (ok) onClose();
+            }}
+          >
+            Duplicar
+          </Button>
+        </>
+      }
+    >
+      <Input
+        label="Nuevo nombre"
+        value={newName}
+        mono
+        onChange={(e) => setNewName(e.currentTarget.value)}
+      />
+    </Modal>
+  );
+}
+
+function RowAction({
+  children,
+  onClick,
+  label,
+  danger = false,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  label: string;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex h-8 w-8 items-center justify-center rounded-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-ink"
+      onMouseEnter={(e) =>
+        (e.currentTarget.style.background = danger
+          ? "var(--state-danger-soft)"
+          : "rgba(255,255,255,0.06)")
+      }
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      style={danger ? { color: "var(--state-danger-text)" } : undefined}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatusDot({ status }: { status: McpInstallation["status"] }) {
+  const map = {
+    ok: { bg: "var(--state-ok)", glow: "var(--state-ok-glow)", t: "OK" },
+    command_not_found: {
+      bg: "var(--state-danger)",
+      glow: "var(--state-danger-glow)",
+      t: "Comando no encontrado",
+    },
+    disabled: { bg: "var(--color-faint)", glow: "transparent", t: "Deshabilitado" },
+    unknown: { bg: "var(--state-warn)", glow: "transparent", t: "Desconocido" },
+  } as const;
+  const s = map[status];
   return (
     <span
-      title={broken ? "Comando no encontrado en PATH" : "OK"}
+      title={s.t}
       className="h-2.5 w-2.5 shrink-0 rounded-full"
-      style={{
-        background: broken ? "var(--state-danger)" : "var(--state-ok)",
-        boxShadow: broken
-          ? "0 0 8px var(--state-danger-glow)"
-          : "0 0 8px var(--state-ok-glow)",
-      }}
+      style={{ background: s.bg, boxShadow: `0 0 8px ${s.glow}` }}
     />
   );
 }
@@ -328,16 +533,12 @@ function StateCard({
       <div
         className="flex h-14 w-14 items-center justify-center rounded-[18px] border border-[var(--line)]"
         style={{
-          background: danger
-            ? "var(--state-danger-soft)"
-            : "var(--accent-soft)",
+          background: danger ? "var(--state-danger-soft)" : "var(--accent-soft)",
         }}
       >
         <Icon
           size={26}
-          style={{
-            color: danger ? "var(--state-danger-text)" : "var(--accent-strong)",
-          }}
+          style={{ color: danger ? "var(--state-danger-text)" : "var(--accent-strong)" }}
         />
       </div>
       <h2 className="text-[16px] font-semibold text-ink">{title}</h2>

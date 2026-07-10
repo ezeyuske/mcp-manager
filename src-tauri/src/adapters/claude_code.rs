@@ -79,18 +79,30 @@ impl AppAdapter for ClaudeCodeAdapter {
         }
 
         let file = Self::read_file(&path)?;
-        Ok(installations_from_file(&file))
+        Ok(installations_from_file(&file, &path.display().to_string()))
     }
 }
 
 /// Lógica pura de conversión archivo -> instalaciones, separada de la
 /// resolución de paths/I-O para poder testearla con fixtures en memoria.
-fn installations_from_file(file: &ClaudeCodeFile) -> Vec<McpInstallation> {
+///
+/// Nota: las entradas de scope proyecto que viven en
+/// `projects[path].mcpServers` de `~/.claude.json` reportan `config_path`
+/// apuntando a `~/.claude.json` (que es de donde efectivamente se leen
+/// hoy). Fase 3 solo agrega *nuevas* entradas de proyecto a `.mcp.json`
+/// standalone; las legacy siguen viviendo y leyéndose desde acá.
+fn installations_from_file(file: &ClaudeCodeFile, config_path: &str) -> Vec<McpInstallation> {
     let mut installations = Vec::new();
 
     // Scope user: mcpServers top-level.
     for (name, value) in file.mcp_servers.iter() {
-        installations.push(parse_installation(name, value, Scope::User, None));
+        installations.push(parse_installation(
+            name,
+            value,
+            Scope::User,
+            None,
+            config_path,
+        ));
     }
 
     // Scope proyecto: projects[<path>].mcpServers.
@@ -109,6 +121,7 @@ fn installations_from_file(file: &ClaudeCodeFile) -> Vec<McpInstallation> {
                 value,
                 Scope::Project,
                 Some(project_path.clone()),
+                config_path,
             ));
         }
     }
@@ -121,6 +134,7 @@ fn parse_installation(
     value: &Value,
     scope: Scope,
     project_path: Option<String>,
+    config_path: &str,
 ) -> McpInstallation {
     let parsed: Option<McpServerConfig> = serde_json::from_value(value.clone()).ok();
 
@@ -136,10 +150,19 @@ fn parse_installation(
             url: None,
             env_keys: Vec::new(),
             status: crate::domain::McpStatus::Unknown,
+            config_path: config_path.to_string(),
+            enabled: true,
         };
     };
 
-    super::build_installation(name, AppId::ClaudeCode, scope, project_path, cfg)
+    super::build_installation(
+        name,
+        AppId::ClaudeCode,
+        scope,
+        project_path,
+        cfg,
+        config_path.to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -199,7 +222,7 @@ mod tests {
     #[test]
     fn parses_user_and_project_scope_counts() {
         let file: ClaudeCodeFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/.claude.json");
 
         // 2 user-scope (hibob, workspacemcp) + 1 project-scope (local-tool).
         assert_eq!(installations.len(), 3);
@@ -220,7 +243,7 @@ mod tests {
     #[test]
     fn project_scope_entry_carries_project_path() {
         let file: ClaudeCodeFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/.claude.json");
 
         let local_tool = installations
             .iter()
@@ -239,7 +262,7 @@ mod tests {
     #[test]
     fn project_without_mcp_servers_key_contributes_no_installations() {
         let file: ClaudeCodeFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/.claude.json");
 
         assert!(installations
             .iter()
@@ -249,7 +272,7 @@ mod tests {
     #[test]
     fn env_values_never_leak_only_keys_do() {
         let file: ClaudeCodeFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/.claude.json");
 
         let workspacemcp = installations
             .iter()

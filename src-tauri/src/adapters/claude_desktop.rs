@@ -91,16 +91,16 @@ impl AppAdapter for ClaudeDesktopAdapter {
         }
 
         let file = Self::read_file(&path)?;
-        Ok(installations_from_file(&file))
+        Ok(installations_from_file(&file, &path.display().to_string()))
     }
 }
 
 /// Lógica pura de conversión archivo -> instalaciones, separada de la
 /// resolución de paths/I-O para poder testearla con fixtures en memoria.
-fn installations_from_file(file: &ClaudeDesktopFile) -> Vec<McpInstallation> {
+fn installations_from_file(file: &ClaudeDesktopFile, config_path: &str) -> Vec<McpInstallation> {
     file.mcp_servers
         .iter()
-        .map(|(name, value)| parse_installation(name, value))
+        .map(|(name, value)| parse_installation(name, value, config_path))
         .collect()
 }
 
@@ -108,7 +108,7 @@ fn installations_from_file(file: &ClaudeDesktopFile) -> Vec<McpInstallation> {
 /// para el frontend. Si el valor no matchea la forma esperada de
 /// `McpServerConfig`, se degrada a transporte/estado "unknown" en vez
 /// de tumbar el resto del inventario.
-fn parse_installation(name: &str, value: &Value) -> McpInstallation {
+fn parse_installation(name: &str, value: &Value, config_path: &str) -> McpInstallation {
     let parsed: Option<McpServerConfig> = serde_json::from_value(value.clone()).ok();
 
     let Some(cfg) = parsed else {
@@ -123,10 +123,19 @@ fn parse_installation(name: &str, value: &Value) -> McpInstallation {
             url: None,
             env_keys: Vec::new(),
             status: crate::domain::McpStatus::Unknown,
+            config_path: config_path.to_string(),
+            enabled: true,
         };
     };
 
-    super::build_installation(name, AppId::ClaudeDesktop, Scope::User, None, cfg)
+    super::build_installation(
+        name,
+        AppId::ClaudeDesktop,
+        Scope::User,
+        None,
+        cfg,
+        config_path.to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -161,18 +170,22 @@ mod tests {
     #[test]
     fn parses_two_installations_with_user_scope() {
         let file: ClaudeDesktopFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/claude_desktop_config.json");
 
         assert_eq!(installations.len(), 2);
         assert!(installations.iter().all(|i| i.scope == Scope::User));
         assert!(installations.iter().all(|i| i.app == AppId::ClaudeDesktop));
         assert!(installations.iter().all(|i| i.project_path.is_none()));
+        assert!(installations
+            .iter()
+            .all(|i| i.config_path == "/tmp/claude_desktop_config.json"));
+        assert!(installations.iter().all(|i| i.enabled));
     }
 
     #[test]
     fn entry_without_type_infers_stdio_transport() {
         let file: ClaudeDesktopFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/claude_desktop_config.json");
 
         let context7 = installations
             .iter()
@@ -185,7 +198,7 @@ mod tests {
     #[test]
     fn env_keys_are_present_but_never_values() {
         let file: ClaudeDesktopFile = serde_json::from_str(FIXTURE).expect("fixture parsea");
-        let installations = installations_from_file(&file);
+        let installations = installations_from_file(&file, "/tmp/claude_desktop_config.json");
 
         let obsidian = installations
             .iter()

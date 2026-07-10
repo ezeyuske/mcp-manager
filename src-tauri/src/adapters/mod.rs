@@ -85,6 +85,7 @@ pub(crate) fn build_installation(
     scope: Scope,
     project_path: Option<String>,
     cfg: McpServerConfig,
+    config_path: String,
 ) -> McpInstallation {
     let transport = infer_transport(&cfg);
     let status = resolve_status(transport, cfg.command.as_deref());
@@ -103,6 +104,8 @@ pub(crate) fn build_installation(
         url: cfg.url,
         env_keys,
         status,
+        config_path,
+        enabled: true,
     }
 }
 
@@ -175,8 +178,14 @@ mod tests {
             }
         }));
 
-        let installation =
-            build_installation("mcp-obsidian", AppId::ClaudeDesktop, Scope::User, None, cfg);
+        let installation = build_installation(
+            "mcp-obsidian",
+            AppId::ClaudeDesktop,
+            Scope::User,
+            None,
+            cfg,
+            "/tmp/claude_desktop_config.json".to_string(),
+        );
 
         assert_eq!(
             installation.env_keys,
@@ -197,7 +206,14 @@ mod tests {
             "env": { "Z_VAR": "1", "A_VAR": "2" }
         }));
 
-        let installation = build_installation("srv", AppId::ClaudeCode, Scope::User, None, cfg);
+        let installation = build_installation(
+            "srv",
+            AppId::ClaudeCode,
+            Scope::User,
+            None,
+            cfg,
+            "/tmp/.claude.json".to_string(),
+        );
 
         assert_eq!(
             installation.env_keys,

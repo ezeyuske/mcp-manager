@@ -1,5 +1,5 @@
 import { useEffect, type ComponentType } from "react";
-import { Sidebar } from "./components";
+import { Sidebar, ToastHost } from "./components";
 import {
   McpsScreen,
   SkillsScreen,
@@ -43,6 +43,7 @@ function App() {
       <main className="min-w-0 flex-1 overflow-hidden">
         <Active key={screen} />
       </main>
+      <ToastHost />
     </div>
   );
 }

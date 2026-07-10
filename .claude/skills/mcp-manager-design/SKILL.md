@@ -67,9 +67,11 @@ coral) viven en `ACCENTS` en `src/types/theme.ts`.
 |-------|-----|
 | `--state-ok` / `--state-ok-glow` | verde: MCP sano, app detectada, dot OK |
 | `--state-warn` | amarillo: advertencia (ej. error leyendo config de una app) |
-| `--state-danger` / `--state-danger-glow` | rojo: dot/estado roto (comando no encontrado) |
-| `--state-danger-text` | texto/ícono danger sobre fondo oscuro |
+| `--state-danger` / `--state-danger-glow` | rojo: dot/estado roto (comando no encontrado), relleno de botón danger |
+| `--state-danger-text` | texto/ícono danger sobre fondo OSCURO (tags, contadores) |
+| `--state-danger-contrast` | texto sobre RELLENO danger (ej. botón danger) — no confundir con `-text` |
 | `--state-danger-soft` | fondo tenue de tags/cards danger |
+| `--overlay` | scrim de fondo de modales |
 
 Regla: los colores de estado también se usan SIEMPRE vía estos tokens, nunca
 como hex literal en un componente (igual que el acento). La única diferencia es

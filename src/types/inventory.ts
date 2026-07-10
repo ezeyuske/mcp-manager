@@ -7,7 +7,7 @@
 export type AppId = "claude-desktop" | "claude-code";
 export type Scope = "user" | "project";
 export type TransportKind = "stdio" | "sse" | "http" | "unknown";
-export type McpStatus = "ok" | "command_not_found" | "unknown";
+export type McpStatus = "ok" | "command_not_found" | "unknown" | "disabled";
 
 export interface McpInstallation {
   name: string;
@@ -21,6 +21,57 @@ export interface McpInstallation {
   /** Solo las claves de env; los valores nunca cruzan al frontend. */
   envKeys: string[];
   status: McpStatus;
+  /** Archivo donde vive (o viviría) la entrada. Rutea las mutaciones. */
+  configPath: string;
+  /** false = deshabilitado (guardado en el sidecar, fuera del config). */
+  enabled: boolean;
+}
+
+/** Identifica unívocamente una entrada para las mutaciones (espejo de McpTarget en Rust). */
+export interface McpTarget {
+  app: AppId;
+  scope: Scope;
+  projectPath?: string | null;
+  name: string;
+}
+
+export function targetOf(inst: McpInstallation): McpTarget {
+  return {
+    app: inst.app,
+    scope: inst.scope,
+    projectPath: inst.projectPath ?? null,
+    name: inst.name,
+  };
+}
+
+/** Payload de `config` para upsert_mcp (espejo de McpServerConfig en Rust). */
+export interface McpServerConfigInput {
+  type?: string;
+  command?: string;
+  args: string[];
+  env: Record<string, string>;
+  url?: string;
+}
+
+export type MutationAction =
+  | "add"
+  | "edit"
+  | "delete"
+  | "duplicate"
+  | "enable"
+  | "disable"
+  | "copy"
+  | "restore";
+
+export interface MutationLog {
+  id: string;
+  timestamp: string;
+  app: AppId;
+  scope: Scope;
+  filePath: string;
+  action: MutationAction;
+  mcpName: string;
+  backupPath?: string | null;
 }
 
 export interface AppInfo {

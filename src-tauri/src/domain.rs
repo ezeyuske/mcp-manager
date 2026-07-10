@@ -34,6 +34,7 @@ pub enum McpStatus {
     Ok,
     CommandNotFound,
     Unknown,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +50,10 @@ pub struct McpInstallation {
     pub url: Option<String>,
     pub env_keys: Vec<String>,
     pub status: McpStatus,
+    /// Archivo real donde vive (o viviría) esta entrada.
+    pub config_path: String,
+    /// `false` cuando la entrada está deshabilitada (ver `disabled.rs`).
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +118,19 @@ pub struct ClaudeDesktopFile {
 /// Un proyecto dentro de `projects` en `~/.claude.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClaudeCodeProject {
+    #[serde(rename = "mcpServers", default, skip_serializing_if = "Map::is_empty")]
+    pub mcp_servers: Map<String, Value>,
+
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `.mcp.json` (scope proyecto). Puede estar versionado en git por el
+/// usuario: mismo cuidado de preservación de claves ajenas, y en
+/// `safe_write` se lo serializa con formateo estable para no ensuciar
+/// diffs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpJsonFile {
     #[serde(rename = "mcpServers", default, skip_serializing_if = "Map::is_empty")]
     pub mcp_servers: Map<String, Value>,
 

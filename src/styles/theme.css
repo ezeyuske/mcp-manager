@@ -62,9 +62,13 @@
   --state-ok-glow: rgba(51, 201, 138, 0.53);
   --state-warn: #f2c14e;
   --state-danger: #f2555a;
-  --state-danger-text: #ff9a9e; /* texto/ícono sobre fondo oscuro */
+  --state-danger-text: #ff9a9e; /* texto/ícono danger sobre fondo oscuro */
+  --state-danger-contrast: #fff; /* texto sobre relleno danger (botón) */
   --state-danger-glow: rgba(242, 85, 90, 0.53);
   --state-danger-soft: rgba(242, 85, 90, 0.14); /* fondos tenues danger */
+
+  /* Scrim de overlays (modales) */
+  --overlay: rgba(9, 12, 20, 0.6);
 }
 
 /* ---- Base --------------------------------------------------------------- */

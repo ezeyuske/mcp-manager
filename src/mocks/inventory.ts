@@ -1,5 +1,9 @@
 import type { Inventory } from "../types/inventory";
 
+const DESKTOP_CFG =
+  "~/Library/Application Support/Claude/claude_desktop_config.json";
+const CODE_CFG = "~/.claude.json";
+
 /**
  * Mock SOLO para desarrollo en browser (`pnpm dev`), donde no hay backend
  * Tauri. La app real (`pnpm tauri dev`) siempre usa `get_inventory`. Sirve
@@ -11,14 +15,13 @@ export const MOCK_INVENTORY: Inventory = {
       id: "claude-desktop",
       label: "Claude Desktop",
       installed: true,
-      configPath:
-        "~/Library/Application Support/Claude/claude_desktop_config.json",
+      configPath: DESKTOP_CFG,
     },
     {
       id: "claude-code",
       label: "Claude Code",
       installed: true,
-      configPath: "~/.claude.json",
+      configPath: CODE_CFG,
     },
   ],
   installations: [
@@ -31,6 +34,8 @@ export const MOCK_INVENTORY: Inventory = {
       args: ["-y", "@upstash/context7-mcp"],
       envKeys: [],
       status: "ok",
+      configPath: DESKTOP_CFG,
+      enabled: true,
     },
     {
       name: "context7",
@@ -41,6 +46,8 @@ export const MOCK_INVENTORY: Inventory = {
       args: ["-y", "@upstash/context7-mcp"],
       envKeys: [],
       status: "ok",
+      configPath: CODE_CFG,
+      enabled: true,
     },
     {
       name: "playwright",
@@ -51,16 +58,20 @@ export const MOCK_INVENTORY: Inventory = {
       args: ["-y", "@playwright/mcp@latest"],
       envKeys: [],
       status: "ok",
+      configPath: CODE_CFG,
+      enabled: true,
     },
     {
       name: "markitdown",
-      app: "claude-code",
+      app: "claude-desktop",
       scope: "user",
       transport: "stdio",
       command: "markitdown-mcp",
       args: [],
       envKeys: ["MARKITDOWN_ENABLE_PLUGINS"],
       status: "command_not_found",
+      configPath: DESKTOP_CFG,
+      enabled: true,
     },
     {
       name: "notion",
@@ -71,17 +82,21 @@ export const MOCK_INVENTORY: Inventory = {
       args: [],
       envKeys: ["NOTION_TOKEN"],
       status: "ok",
+      configPath: DESKTOP_CFG,
+      enabled: true,
     },
     {
-      name: "linear",
+      name: "local-tool",
       app: "claude-code",
       scope: "project",
       projectPath: "~/www/ia-tools/others/mcp-manager",
-      transport: "sse",
-      url: "https://mcp.linear.app/sse",
+      transport: "stdio",
+      command: "./bin/local-tool",
       args: [],
-      envKeys: [],
-      status: "ok",
+      envKeys: ["TOKEN"],
+      status: "disabled",
+      configPath: "~/www/ia-tools/others/mcp-manager/.mcp.json",
+      enabled: false,
     },
   ],
 };
