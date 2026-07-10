@@ -64,6 +64,9 @@ pub enum WriteError {
 
     #[error("no se encontró el destino de la mutación: {message}")]
     TargetNotFound { message: String },
+
+    #[error("keychain del sistema no disponible o falló: {message}")]
+    Keychain { message: String },
 }
 
 /// El frontend solo necesita un mensaje legible, no la estructura interna

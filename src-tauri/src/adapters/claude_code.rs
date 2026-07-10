@@ -152,6 +152,7 @@ fn parse_installation(
             status: crate::domain::McpStatus::Unknown,
             config_path: config_path.to_string(),
             enabled: true,
+            vault_keys: Vec::new(),
         };
     };
 

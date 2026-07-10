@@ -11,7 +11,7 @@ use crate::safe_write;
 /// Identifica unívocamente una entrada de MCP en algún config, tal como
 /// la referencia el frontend. `project_path` solo aplica (y es
 /// obligatorio en la práctica) cuando `scope == Scope::Project`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpTarget {
     pub app: AppId,
@@ -261,9 +261,49 @@ fn merge_entry(existing: &Value, incoming: &McpServerConfig) -> Result<Value, Wr
     Ok(Value::Object(merged))
 }
 
+/// Inyecta en `entry` (un `Value` de `mcpServers[name]` ya mergeado) el
+/// valor actual de cada secreto bindeado a `target` en el vault. Si el
+/// vault no tiene bindings para este target (caso normal, la mayoría de
+/// los MCPs no usan el vault) es un no-op silencioso: no falla el
+/// upsert si `vault.json` no existe todavía. Si el keychain falla al
+/// leer un secreto puntual, sí se propaga el error (mejor fallar el
+/// upsert que guardar una entrada con un binding roto).
+fn apply_vault_bindings(target: &McpTarget, entry: &mut Value) -> Result<(), WriteError> {
+    let bindings = crate::vault::bindings_for_target(target).unwrap_or_default();
+    if bindings.is_empty() {
+        return Ok(());
+    }
+
+    if !entry.is_object() {
+        *entry = Value::Object(Map::new());
+    }
+    let obj = entry.as_object_mut().expect("garantizado arriba");
+    let env_obj = obj
+        .entry("env")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !env_obj.is_object() {
+        *env_obj = Value::Object(Map::new());
+    }
+    let env_map = env_obj.as_object_mut().expect("garantizado arriba");
+
+    for (env_key, secret_name) in bindings {
+        let value = crate::vault::get_secret(&secret_name)?;
+        env_map.insert(env_key, Value::String(value));
+    }
+
+    Ok(())
+}
+
 /// ADD (la clave no existe) o EDIT (la clave existe: merge quirúrgico a
 /// nivel entrada, preservando los campos desconocidos de la entrada
 /// existente).
+///
+/// Vault-aware: tras el merge y ANTES de escribir, para cada binding DEL
+/// VAULT que pertenece a ESTE target puntual (`vault::bindings_for_target`)
+/// se setea `env[envKey] = vault::get_secret(secretName)`, pisando
+/// cualquier valor que el frontend haya mandado inline para esa misma
+/// clave (el vault gana). Nunca se inyectan secretos de otros MCPs: solo
+/// los bindings de `target` se consultan.
 pub fn upsert(target: &McpTarget, config: McpServerConfig) -> Result<Option<PathBuf>, WriteError> {
     let file = resolve_target_file(target)?;
     upsert_into(&file, target, config)
@@ -278,13 +318,15 @@ fn upsert_into(
 
     let is_edit = mcp_servers.contains_key(&target.name);
 
-    let new_value = if let Some(existing) = mcp_servers.get(&target.name) {
+    let mut new_value = if let Some(existing) = mcp_servers.get(&target.name) {
         merge_entry(existing, &config)?
     } else {
         serde_json::to_value(&config).map_err(|e| WriteError::Serialize {
             message: e.to_string(),
         })?
     };
+
+    apply_vault_bindings(target, &mut new_value)?;
 
     mcp_servers.insert(target.name.clone(), new_value);
 

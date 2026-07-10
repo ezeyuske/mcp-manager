@@ -5,6 +5,7 @@ use crate::domain::{AppId, Inventory, McpServerConfig, McpStatus, Scope};
 use crate::mutations::{self, McpTarget};
 use crate::projects;
 use crate::safe_write;
+use crate::vault::{self, VaultSecretInfo};
 
 /// Recorre todos los adapters de apps soportadas y arma un inventario
 /// unificado. Si un adapter falla al leer su config (JSON corrupto,
@@ -19,8 +20,8 @@ use crate::safe_write;
 ///   (`projects.json`), como scope Project de Claude Code.
 #[tauri::command]
 pub fn get_inventory() -> Result<Inventory, String> {
-    let mut apps = Vec::new();
-    let mut installations = Vec::new();
+    let mut apps: Vec<crate::domain::AppInfo> = Vec::new();
+    let mut installations: Vec<crate::domain::McpInstallation> = Vec::new();
 
     for adapter in all_adapters() {
         let mut info = adapter.detect();
@@ -101,6 +102,24 @@ pub fn get_inventory() -> Result<Inventory, String> {
             installation.status = McpStatus::Disabled;
             installation.enabled = false;
             installations.push(installation);
+        }
+    }
+
+    // Cruzamos con el vault para poblar `vault_keys`: subconjunto de
+    // `env_keys` que tiene un binding activo. Se hace acá (y no dentro de
+    // `build_installation`) para que `adapters` no necesite conocer el
+    // vault; si el vault no está disponible por algún motivo, cada
+    // instalación simplemente queda con `vault_keys` vacío en vez de
+    // tumbar el inventario entero.
+    for installation in installations.iter_mut() {
+        let target = McpTarget {
+            app: installation.app,
+            scope: installation.scope,
+            project_path: installation.project_path.clone(),
+            name: installation.name.clone(),
+        };
+        if let Ok(bindings) = vault::bindings_for_target(&target) {
+            installation.vault_keys = bindings.into_iter().map(|(env_key, _)| env_key).collect();
         }
     }
 
@@ -213,4 +232,39 @@ fn restore_backup_impl(
 #[tauri::command]
 pub fn register_project_dir(path: String) -> Result<(), String> {
     projects::register(&path).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------
+// Comandos del vault de secrets. Los VALORES nunca cruzan hacia el
+// frontend salvo en `vault_reveal` (bajo demanda explícita del usuario).
+// ---------------------------------------------------------------------
+
+#[tauri::command]
+pub fn vault_list() -> Result<Vec<VaultSecretInfo>, String> {
+    vault::list_secrets().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn vault_set_secret(name: String, value: String) -> Result<(), String> {
+    vault::set_secret(&name, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn vault_delete_secret(name: String) -> Result<(), String> {
+    vault::delete_secret(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn vault_reveal(name: String) -> Result<String, String> {
+    vault::reveal(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn bind_env_secret(target: McpTarget, env_key: String, secret_name: String) -> Result<(), String> {
+    vault::bind(&target, &env_key, &secret_name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn unbind_env_secret(target: McpTarget, env_key: String) -> Result<(), String> {
+    vault::unbind(&target, &env_key).map_err(|e| e.to_string())
 }

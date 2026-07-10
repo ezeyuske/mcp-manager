@@ -54,6 +54,11 @@ pub struct McpInstallation {
     pub config_path: String,
     /// `false` cuando la entrada está deshabilitada (ver `disabled.rs`).
     pub enabled: bool,
+    /// Subconjunto de `env_keys` que tienen un binding activo en el vault
+    /// (`vault.rs`). Se cruza en `get_inventory`, después de construir la
+    /// instalación, para no acoplar `adapters`/`build_installation` (que
+    /// no conocen el vault) con `vault.json`.
+    pub vault_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

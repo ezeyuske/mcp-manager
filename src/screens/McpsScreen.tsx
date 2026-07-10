@@ -11,6 +11,7 @@ import {
   CopyPlus,
   ArrowLeftRight,
   Trash2,
+  Lock,
 } from "lucide-react";
 import { ScreenShell } from "./ScreenShell";
 import { McpFormModal } from "./mcp/McpFormModal";
@@ -280,6 +281,19 @@ function InstallationRow({
             <Tag>
               {inst.envKeys.length} env{inst.envKeys.length === 1 ? "" : "s"}
             </Tag>
+          )}
+          {inst.vaultKeys.length > 0 && (
+            <span
+              title={`${inst.vaultKeys.length} en el vault: ${inst.vaultKeys.join(", ")}`}
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium"
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent-strong)",
+              }}
+            >
+              <Lock size={10} />
+              {inst.vaultKeys.length}
+            </span>
           )}
           {!inst.enabled && <Tag>deshabilitado</Tag>}
         </div>

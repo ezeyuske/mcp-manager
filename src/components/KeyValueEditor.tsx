@@ -1,9 +1,11 @@
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Lock, LockOpen } from "lucide-react";
 import { Input } from "./Input";
 
 export interface KeyValue {
   key: string;
   value: string;
+  /** Si es secreto, se guarda en el vault (keychain) y se enmascara. */
+  secret?: boolean;
 }
 
 interface KeyValueEditorProps {
@@ -11,17 +13,21 @@ interface KeyValueEditorProps {
   onChange: (entries: KeyValue[]) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
+  /** Habilita el toggle de "secreto" por fila (vault). */
+  allowSecret?: boolean;
 }
 
 /**
- * Editor de pares clave/valor (para `env`). En Fase 3 los valores van en
- * texto plano al config; el vault en keychain llega en Fase 4.
+ * Editor de pares clave/valor (para `env`). Las filas marcadas como secreto
+ * se guardan en el vault del keychain al guardar el MCP (no en el estado ni en
+ * el config en texto plano si es gestionado por el vault).
  */
 export function KeyValueEditor({
   entries,
   onChange,
   keyPlaceholder = "CLAVE",
   valuePlaceholder = "valor",
+  allowSecret = false,
 }: KeyValueEditorProps) {
   const update = (i: number, patch: Partial<KeyValue>) =>
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
@@ -49,11 +55,31 @@ export function KeyValueEditor({
           <div className="flex-1">
             <Input
               mono
+              type={e.secret ? "password" : "text"}
               value={e.value}
-              placeholder={valuePlaceholder}
+              placeholder={e.secret ? "•••• (al keychain)" : valuePlaceholder}
               onChange={(ev) => update(i, { value: ev.currentTarget.value })}
             />
           </div>
+          {allowSecret && (
+            <button
+              onClick={() => update(i, { secret: !e.secret })}
+              aria-label={e.secret ? "Quitar secreto" : "Marcar secreto"}
+              title={
+                e.secret
+                  ? "Secreto (se guarda en el keychain)"
+                  : "Marcar como secreto"
+              }
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] transition-colors duration-[var(--dur)]"
+              style={
+                e.secret
+                  ? { color: "var(--accent-strong)", background: "var(--accent-soft)" }
+                  : { color: "var(--color-muted)" }
+              }
+            >
+              {e.secret ? <Lock size={15} /> : <LockOpen size={15} />}
+            </button>
+          )}
           <button
             onClick={() => remove(i)}
             aria-label="Quitar variable"

@@ -8,10 +8,12 @@ mod mutations;
 mod paths;
 mod projects;
 mod safe_write;
+mod vault;
 
 use commands::{
-    copy_mcp, delete_mcp, duplicate_mcp, get_inventory, list_changelog, register_project_dir,
-    restore_backup, set_mcp_enabled, upsert_mcp,
+    bind_env_secret, copy_mcp, delete_mcp, duplicate_mcp, get_inventory, list_changelog,
+    register_project_dir, restore_backup, set_mcp_enabled, unbind_env_secret, upsert_mcp,
+    vault_delete_secret, vault_list, vault_reveal, vault_set_secret,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,7 +32,13 @@ pub fn run() {
             copy_mcp,
             list_changelog,
             restore_backup,
-            register_project_dir
+            register_project_dir,
+            vault_list,
+            vault_set_secret,
+            vault_delete_secret,
+            vault_reveal,
+            bind_env_secret,
+            unbind_env_secret
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

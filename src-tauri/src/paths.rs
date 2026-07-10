@@ -43,3 +43,9 @@ pub fn changelog_file() -> Result<PathBuf, WriteError> {
 pub fn projects_file() -> Result<PathBuf, WriteError> {
     Ok(app_data_dir()?.join("projects.json"))
 }
+
+/// `~/.mcp-manager/vault.json` (metadata de secrets: SOLO nombres y
+/// bindings, nunca valores — ver `vault.rs`).
+pub fn vault_file() -> Result<PathBuf, WriteError> {
+    Ok(app_data_dir()?.join("vault.json"))
+}

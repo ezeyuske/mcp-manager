@@ -11,6 +11,7 @@ import {
   type KeyValue,
 } from "../../components";
 import { useMutations } from "../../store/mutations";
+import { useVault } from "../../store/vault";
 import { isTauri } from "../../lib/tauri";
 import { useToast } from "../../store/toast";
 import type {
@@ -35,6 +36,8 @@ export function McpFormModal({ open: isOpen, onClose, initial }: McpFormModalPro
   const upsert = useMutations((s) => s.upsert);
   const busy = useMutations((s) => s.busy);
   const registerProject = useMutations((s) => s.registerProject);
+  const setSecret = useVault((s) => s.setSecret);
+  const bindSecret = useVault((s) => s.bind);
   const pushToast = useToast((s) => s.push);
 
   const [name, setName] = useState(initial?.name ?? "");
@@ -88,17 +91,19 @@ export function McpFormModal({ open: isOpen, onClose, initial }: McpFormModalPro
       .map((a) => a.trim())
       .filter(Boolean);
 
+    // Filas de env: las NO secretas van inline al config; las secretas se
+    // guardan en el vault (keychain) y se vinculan tras crear el MCP.
+    const envRows = env.filter((e) => e.key.trim() !== "");
+    const inlineRows = envRows.filter((e) => !e.secret);
+    const secretRows = envRows.filter((e) => e.secret && e.value !== "");
+
     const config: McpServerConfigInput = {
       args: isStdio ? args : [],
-      // ADD: env desde el editor. EDIT: vacío ⇒ el backend preserva el env
-      // existente (los valores de env no cruzan al frontend; su gestión es Fase 4).
+      // ADD: env inline (no secreto) desde el editor. EDIT: vacío ⇒ el backend
+      // preserva el env existente (los valores no cruzan al frontend).
       env:
         !editing && isStdio
-          ? Object.fromEntries(
-              env
-                .filter((e) => e.key.trim() !== "")
-                .map((e) => [e.key.trim(), e.value]),
-            )
+          ? Object.fromEntries(inlineRows.map((e) => [e.key.trim(), e.value]))
           : {},
     };
 
@@ -114,16 +119,25 @@ export function McpFormModal({ open: isOpen, onClose, initial }: McpFormModalPro
       await registerProject(projectPath.trim());
     }
 
-    const ok = await upsert(
-      {
-        app: effectiveApp,
-        scope,
-        projectPath: scope === "project" ? projectPath.trim() : null,
-        name: name.trim(),
-      },
-      config,
-    );
-    if (ok) onClose();
+    const target = {
+      app: effectiveApp,
+      scope,
+      projectPath: scope === "project" ? projectPath.trim() : null,
+      name: name.trim(),
+    };
+
+    const ok = await upsert(target, config);
+    if (!ok) return;
+
+    // Secretos: guardar en el vault y vincular a este MCP (mínimo privilegio:
+    // el binding es solo para este target). El nombre del secreto = la clave.
+    for (const row of secretRows) {
+      const key = row.key.trim();
+      const created = await setSecret(key, row.value);
+      if (created) await bindSecret(target, key, key);
+    }
+
+    onClose();
   }
 
   const transportKind: TransportKind = effectiveTransport;
@@ -241,7 +255,11 @@ export function McpFormModal({ open: isOpen, onClose, initial }: McpFormModalPro
                 <span className="text-[12.5px] font-medium text-ink-soft">
                   Variables de entorno
                 </span>
-                <KeyValueEditor entries={env} onChange={setEnv} />
+                <KeyValueEditor entries={env} onChange={setEnv} allowSecret />
+                <span className="text-[11.5px] text-faint">
+                  El candado guarda el valor en el keychain del OS (vault) y lo
+                  inyecta al escribir; no queda en el estado de la app.
+                </span>
               </div>
             )}
             {editing && initial && initial.envKeys.length > 0 && (

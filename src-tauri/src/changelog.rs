@@ -15,6 +15,10 @@ pub enum MutationAction {
     Disable,
     Copy,
     Restore,
+    VaultSet,
+    VaultDelete,
+    Bind,
+    Unbind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

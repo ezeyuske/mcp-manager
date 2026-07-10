@@ -106,6 +106,9 @@ pub(crate) fn build_installation(
         status,
         config_path,
         enabled: true,
+        // Se puebla después, en `get_inventory`, cruzando con
+        // `vault::bindings_for_target` (los adapters no conocen el vault).
+        vault_keys: Vec::new(),
     }
 }
 

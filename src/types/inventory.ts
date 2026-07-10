@@ -20,11 +20,20 @@ export interface McpInstallation {
   url?: string | null;
   /** Solo las claves de env; los valores nunca cruzan al frontend. */
   envKeys: string[];
+  /** Subconjunto de envKeys vinculadas a un secreto del vault (candado). */
+  vaultKeys: string[];
   status: McpStatus;
   /** Archivo donde vive (o viviría) la entrada. Rutea las mutaciones. */
   configPath: string;
   /** false = deshabilitado (guardado en el sidecar, fuera del config). */
   enabled: boolean;
+}
+
+/** Secreto del vault (keychain). El valor nunca viaja salvo por vault_reveal. */
+export interface VaultSecretInfo {
+  name: string;
+  /** Cantidad de MCPs vinculados a este secreto. */
+  usedBy: number;
 }
 
 /** Identifica unívocamente una entrada para las mutaciones (espejo de McpTarget en Rust). */
