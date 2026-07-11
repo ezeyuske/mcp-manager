@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Desktop app ("mcp-manager") built with **Tauri v2** (Rust backend) + **React 19 / TypeScript** (Vite frontend). Currently a fresh scaffold — the only feature is the sample `greet` command wired end to end. Package manager is **pnpm** (see `packageManager` in `package.json`).
+Desktop app ("mcp-manager") built with **Tauri v2** (Rust backend) + **React 19 / TypeScript** (Vite frontend). It manages MCP servers (and Claude skills) across Claude Desktop and Claude Code. Five phases are shipped: design system + shell, read-only adapters + unified inventory, MCP CRUD with safe writes + log/restore, env vars + keychain vault, and per-project scopes + skills management. See `README.md` for the feature and architecture overview. Package manager is **pnpm** (see `packageManager` in `package.json`).
 
 ## Commands
 
@@ -20,15 +20,15 @@ There is no test runner or linter configured yet.
 
 The frontend↔backend boundary is the key thing to understand:
 
-- **Frontend** (`src/`) calls Rust via `invoke("command_name", args)` from `@tauri-apps/api/core`. See `src/App.tsx` for the `greet` example.
+- **Frontend** (`src/`) calls Rust via `invoke("command_name", args)` from `@tauri-apps/api/core`. See the Zustand stores in `src/store/` (e.g. `inventory.ts`, `mutations.ts`) for how commands are called.
 - **Backend** (`src-tauri/src/lib.rs`) exposes functions annotated with `#[tauri::command]`. Every command **must** be registered in the `tauri::generate_handler![...]` macro inside `run()`, or `invoke` will fail at runtime. `main.rs` is a thin entry point that just calls `lib.rs::run()`.
 - **Permissions**: Tauri v2 gates all backend/plugin capability behind `src-tauri/capabilities/default.json`. When adding a plugin (fs, dialog, shell) or a feature that needs OS access, add the corresponding permission there — otherwise calls are silently blocked. Plugins are also declared in `src-tauri/Cargo.toml` (Rust) and initialized with `.plugin(...)` in `lib.rs`.
 
-Installed-but-not-yet-wired: `tauri-plugin-fs`, `tauri-plugin-dialog`, `tauri-plugin-shell` are in `Cargo.toml` and their JS counterparts in `package.json`, but they are **not** initialized in `lib.rs` nor granted permissions in `default.json`. Wire all three layers (Cargo init + capability + JS import) when using them.
+Wired plugins: `tauri-plugin-opener`, `tauri-plugin-fs`, `tauri-plugin-dialog`, and `tauri-plugin-shell` are declared in `Cargo.toml`, initialized with `.plugin(...)` in `lib.rs`, and granted permissions in `capabilities/default.json` (`opener:default`, `fs:default`, `dialog:default`, `shell:allow-open`). When adding another plugin, wire all three layers (Cargo init + capability + JS import).
 
 ## Gotchas
 
-- **Tailwind is installed but not active.** `tailwindcss` v4 and `@tailwindcss/vite` are in `package.json`, but the plugin is missing from `vite.config.ts` and the app uses plain `src/App.css`. To use Tailwind, add `@tailwindcss/vite` to the Vite `plugins` array and import Tailwind in a CSS entry point.
+- **Tailwind v4 is active, CSS-first.** `@tailwindcss/vite` is wired in `vite.config.ts` and `src/styles/theme.css` holds `@import "tailwindcss"` plus the `@theme` token block and runtime accent CSS vars. There is no `tailwind.config.js` — configure via `@theme`, not a JS config.
 - `vite.config.ts` pins port 1420 with `strictPort: true` — the dev server fails rather than falling back to another port. Tauri depends on this fixed port.
 
 ## Reglas del proyecto (no negociables)
