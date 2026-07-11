@@ -1,14 +1,52 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+mod adapters;
+mod changelog;
+mod commands;
+mod disabled;
+mod domain;
+mod error;
+mod mutations;
+mod paths;
+mod projects;
+mod safe_write;
+mod skills;
+mod vault;
+
+use commands::{
+    bind_env_secret, copy_mcp, delete_mcp, delete_skill, duplicate_mcp, get_inventory, get_skills,
+    list_changelog, list_projects, register_project_dir, restore_backup, set_mcp_enabled,
+    set_skill_enabled, unbind_env_secret, unregister_project, upsert_mcp, vault_delete_secret,
+    vault_list, vault_reveal, vault_set_secret,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![
+            get_inventory,
+            upsert_mcp,
+            delete_mcp,
+            duplicate_mcp,
+            set_mcp_enabled,
+            copy_mcp,
+            list_changelog,
+            restore_backup,
+            register_project_dir,
+            vault_list,
+            vault_set_secret,
+            vault_delete_secret,
+            vault_reveal,
+            bind_env_secret,
+            unbind_env_secret,
+            unregister_project,
+            list_projects,
+            get_skills,
+            set_skill_enabled,
+            delete_skill
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

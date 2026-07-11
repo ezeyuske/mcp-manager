@@ -1,50 +1,57 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, type ComponentType } from "react";
+import { Sidebar, ToastHost } from "./components";
+import {
+  McpsScreen,
+  SkillsScreen,
+  ProjectsScreen,
+  EnvSecretsScreen,
+  ActivityScreen,
+  ThemesScreen,
+  SettingsScreen,
+} from "./screens";
+import { useUI } from "./store/ui";
+import { useTheme } from "./store/theme";
+import { useInventory } from "./store/inventory";
+import { useSkills } from "./store/skills";
+import { useProjects } from "./store/projects";
+import type { Screen } from "./types/nav";
+
+const SCREENS: Record<Screen, ComponentType> = {
+  mcps: McpsScreen,
+  skills: SkillsScreen,
+  projects: ProjectsScreen,
+  env: EnvSecretsScreen,
+  activity: ActivityScreen,
+  themes: ThemesScreen,
+  settings: SettingsScreen,
+};
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const screen = useUI((s) => s.screen);
+  const hydrate = useTheme((s) => s.hydrate);
+  const loadInventory = useInventory((s) => s.load);
+  const loadSkills = useSkills((s) => s.load);
+  const loadProjects = useProjects((s) => s.load);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  // Aplica el acento guardado y carga inventario/skills/proyectos al montar
+  // (para poblar los badges del sidebar antes de visitar cada pantalla).
+  useEffect(() => {
+    hydrate();
+    loadInventory();
+    loadSkills();
+    loadProjects();
+  }, [hydrate, loadInventory, loadSkills, loadProjects]);
+
+  const Active = SCREENS[screen];
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="flex h-screen w-screen overflow-hidden">
+      <Sidebar />
+      <main className="min-w-0 flex-1 overflow-hidden">
+        <Active key={screen} />
+      </main>
+      <ToastHost />
+    </div>
   );
 }
 
