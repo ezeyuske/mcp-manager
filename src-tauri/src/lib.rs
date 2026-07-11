@@ -1,21 +1,10 @@
-mod adapters;
-mod changelog;
 mod commands;
-mod disabled;
-mod domain;
-mod error;
-mod mutations;
-mod paths;
-mod projects;
-mod safe_write;
-mod skills;
-mod vault;
 
 use commands::{
-    bind_env_secret, copy_mcp, delete_mcp, delete_skill, duplicate_mcp, get_inventory, get_skills,
-    list_changelog, list_projects, register_project_dir, restore_backup, set_mcp_enabled,
-    set_skill_enabled, unbind_env_secret, unregister_project, upsert_mcp, vault_delete_secret,
-    vault_list, vault_reveal, vault_set_secret,
+    bind_env_secret, copy_mcp, delete_mcp, delete_skill, duplicate_mcp, get_builtin_status,
+    get_inventory, get_skills, list_changelog, list_projects, register_project_dir, restore_backup,
+    set_builtin_enabled, set_mcp_enabled, set_skill_enabled, unbind_env_secret, unregister_project,
+    upsert_mcp, upsert_skill, vault_delete_secret, vault_list, vault_reveal, vault_set_secret,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,6 +14,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .setup(|_app| {
+            // Auto-heal del built-in: re-registra solo si el path del
+            // sidecar cambió desde la última activación.
+            commands::heal_builtin_on_startup();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_inventory,
             upsert_mcp,
@@ -45,7 +40,10 @@ pub fn run() {
             list_projects,
             get_skills,
             set_skill_enabled,
-            delete_skill
+            delete_skill,
+            get_builtin_status,
+            set_builtin_enabled,
+            upsert_skill
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

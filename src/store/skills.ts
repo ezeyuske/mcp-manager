@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../lib/tauri";
 import { useToast } from "./toast";
-import type { Skill, SkillTarget } from "../types/skills";
+import type { Skill, SkillInput, SkillTarget } from "../types/skills";
 
 type Status = "idle" | "loading" | "ready" | "error";
 
@@ -55,6 +55,7 @@ interface SkillsState {
   load: () => Promise<void>;
   setEnabled: (target: SkillTarget, enabled: boolean) => Promise<boolean>;
   remove: (target: SkillTarget) => Promise<boolean>;
+  upsert: (input: SkillInput) => Promise<boolean>;
 }
 
 export const useSkills = create<SkillsState>((set) => ({
@@ -89,6 +90,11 @@ export const useSkills = create<SkillsState>((set) => ({
   remove: (target) =>
     runSkill(set, `Skill "${target.name}" eliminada.`, "delete_skill", {
       target,
+    }),
+
+  upsert: (input) =>
+    runSkill(set, `Skill "${input.name}" guardada.`, "upsert_skill", {
+      input,
     }),
 }));
 

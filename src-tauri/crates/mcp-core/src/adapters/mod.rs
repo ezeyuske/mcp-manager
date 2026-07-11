@@ -79,7 +79,7 @@ fn resolve_status(transport: TransportKind, command: Option<&str>) -> McpStatus 
 /// ya parseada. Compartido entre adapters para no duplicar la lógica de
 /// inferencia de transporte/estado y, sobre todo, para garantizar que
 /// `env` nunca cruce al frontend salvo como lista de claves.
-pub(crate) fn build_installation(
+pub fn build_installation(
     name: &str,
     app: AppId,
     scope: Scope,
@@ -109,6 +109,8 @@ pub(crate) fn build_installation(
         // Se puebla después, en `get_inventory`, cruzando con
         // `vault::bindings_for_target` (los adapters no conocen el vault).
         vault_keys: Vec::new(),
+        // Se marca en `inventory::build` para la entrada propia de la app.
+        builtin: false,
     }
 }
 

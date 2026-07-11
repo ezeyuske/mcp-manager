@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Sparkles, FolderOpen, Trash2, AlertTriangle } from "lucide-react";
+import { Sparkles, FolderOpen, Trash2, AlertTriangle, Plus, Pencil } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ScreenShell } from "./ScreenShell";
+import { SkillFormModal } from "./skills/SkillFormModal";
 import { SegmentedControl, Toggle, Modal, Button } from "../components";
 import { useSkills } from "../store/skills";
 import { isTauri } from "../lib/tauri";
@@ -13,10 +14,22 @@ export function SkillsScreen() {
   const { status, skills, error, mocked, load } = useSkills();
   const [filter, setFilter] = useState<"all" | Scope>("all");
   const [toDelete, setToDelete] = useState<Skill | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [toEdit, setToEdit] = useState<Skill | null>(null);
 
   useEffect(() => {
     if (status === "idle") load();
   }, [status, load]);
+
+  function openCreate() {
+    setToEdit(null);
+    setFormOpen(true);
+  }
+
+  function openEdit(skill: Skill) {
+    setToEdit(skill);
+    setFormOpen(true);
+  }
 
   const visible = useMemo(
     () => (filter === "all" ? skills : skills.filter((s) => s.scope === filter)),
@@ -27,6 +40,12 @@ export function SkillsScreen() {
     <ScreenShell
       title="Skills"
       subtitle="Carpetas con SKILL.md por scope. Deshabilitar o eliminar mueve la carpeta a un backup recuperable."
+      actions={
+        <Button onClick={openCreate}>
+          <Plus size={16} strokeWidth={2.5} />
+          Nueva skill
+        </Button>
+      }
     >
       {status === "loading" && (
         <div className="flex flex-col gap-2.5">
@@ -91,6 +110,7 @@ export function SkillsScreen() {
               <SkillRow
                 key={`${s.scope}:${s.projectPath ?? ""}:${s.name}`}
                 skill={s}
+                onEdit={() => openEdit(s)}
                 onDelete={() => setToDelete(s)}
               />
             ))}
@@ -107,11 +127,25 @@ export function SkillsScreen() {
       {toDelete && (
         <DeleteSkillModal skill={toDelete} onClose={() => setToDelete(null)} />
       )}
+
+      <SkillFormModal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        initial={toEdit}
+      />
     </ScreenShell>
   );
 }
 
-function SkillRow({ skill, onDelete }: { skill: Skill; onDelete: () => void }) {
+function SkillRow({
+  skill,
+  onEdit,
+  onDelete,
+}: {
+  skill: Skill;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const setEnabled = useSkills((s) => s.setEnabled);
   const pushToast = useToast((s) => s.push);
 
@@ -148,6 +182,18 @@ function SkillRow({ skill, onDelete }: { skill: Skill; onDelete: () => void }) {
         </p>
       </div>
 
+      <button
+        onClick={onEdit}
+        aria-label="Editar skill"
+        title="Editar"
+        className="flex h-8 w-8 items-center justify-center rounded-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-ink"
+        onMouseEnter={(e) =>
+          (e.currentTarget.style.background = "rgba(255,255,255,0.06)")
+        }
+        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      >
+        <Pencil size={15} />
+      </button>
       <button
         onClick={openFolder}
         aria-label="Abrir carpeta"

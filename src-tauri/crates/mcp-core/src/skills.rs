@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::Scope;
 use crate::error::WriteError;
-use crate::{paths, projects};
+use crate::{changelog, paths, projects};
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -39,6 +39,33 @@ pub struct SkillTarget {
     pub scope: Scope,
     pub project_path: Option<String>,
     pub name: String,
+}
+
+/// Datos para crear o editar una skill (`SKILL.md`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInput {
+    pub scope: Scope,
+    pub project_path: Option<String>,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Cuerpo markdown que va DESPUÉS del frontmatter. Si viene vacío al
+    /// editar una skill existente, se PRESERVA el body actual (misma
+    /// disciplina que `mutations::merge_entry` con `env`).
+    #[serde(default)]
+    pub body: String,
+}
+
+/// Frontmatter que serializamos al escribir un SKILL.md. Solo estos campos;
+/// `serde_yaml_ng` garantiza YAML válido y escapado.
+#[derive(Debug, Serialize)]
+struct FrontmatterOut {
+    name: String,
+    description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
 }
 
 /// Frontmatter YAML de un SKILL.md. Solo nos interesan estos campos; el
@@ -422,6 +449,162 @@ pub fn delete_skill(target: &SkillTarget) -> Result<(), WriteError> {
     delete_skill_at(target, &user_dir, &app_data)
 }
 
+// ---------------------------------------------------------------------
+// upsert (crear / editar SKILL.md)
+// ---------------------------------------------------------------------
+
+/// Separa un SKILL.md en `(frontmatter_yaml, body)`. Si no hay
+/// frontmatter, el contenido entero es body.
+fn split_frontmatter_body(content: &str) -> (Option<&str>, &str) {
+    let t = content.trim_start_matches('\u{feff}');
+    let leading_ws = t.len() - t.trim_start().len();
+    let start = &t[leading_ws..];
+    if let Some(after) = start.strip_prefix("---") {
+        if let Some(end) = after.find("\n---") {
+            let yaml = &after[..end];
+            // `rest` arranca en la línea de cierre `---`.
+            let rest = &after[end + 1..];
+            if let Some(nl) = rest.find('\n') {
+                return (Some(yaml), &rest[nl + 1..]);
+            }
+            return (Some(yaml), "");
+        }
+    }
+    (None, content)
+}
+
+/// Renderiza el contenido completo de un SKILL.md a partir del input y un
+/// body ya resuelto.
+fn render_skill_md(input: &SkillInput, body: &str) -> Result<String, WriteError> {
+    let fm = FrontmatterOut {
+        name: input.name.clone(),
+        description: input.description.trim().to_string(),
+        version: input
+            .version
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
+    };
+    let yaml = serde_yaml_ng::to_string(&fm).map_err(|e| WriteError::Serialize {
+        message: e.to_string(),
+    })?;
+
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&yaml);
+    out.push_str("---\n");
+    let body = body.trim_matches('\n');
+    if !body.is_empty() {
+        out.push('\n');
+        out.push_str(body);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Backup recuperable del SKILL.md previo (si existe) antes de pisarlo, en
+/// `~/.mcp-manager/backups/skills/<name>.<ts>.md`.
+fn backup_existing_skill_md(
+    skill_md: &Path,
+    app_data: &Path,
+    name: &str,
+) -> Result<(), WriteError> {
+    if !skill_md.exists() {
+        return Ok(());
+    }
+    let dir = app_data.join("backups").join("skills");
+    std::fs::create_dir_all(&dir).map_err(|source| WriteError::Backup {
+        path: dir.display().to_string(),
+        source,
+    })?;
+    let dst = dir.join(format!("{}.{}.md", name, unique_suffix()));
+    std::fs::copy(skill_md, &dst).map_err(|source| WriteError::Backup {
+        path: dst.display().to_string(),
+        source,
+    })?;
+    Ok(())
+}
+
+fn upsert_skill_at(
+    input: &SkillInput,
+    user_dir: &Path,
+    app_data: &Path,
+) -> Result<(), WriteError> {
+    if input.description.trim().is_empty() {
+        return Err(WriteError::NotSupported {
+            message: "la skill requiere una descripción no vacía".to_string(),
+        });
+    }
+
+    let target = SkillTarget {
+        scope: input.scope,
+        project_path: input.project_path.clone(),
+        name: input.name.clone(),
+    };
+    // Valida el nombre (rechaza traversal) y resuelve la carpeta destino.
+    let dir = skill_original_dir(&target, user_dir)?;
+    let skill_md = dir.join("SKILL.md");
+
+    // No escribir a través de un symlink: si la carpeta de la skill es un
+    // symlink, podría apuntar fuera del árbol de skills.
+    if let Ok(meta) = std::fs::symlink_metadata(&dir) {
+        if meta.file_type().is_symlink() {
+            return Err(WriteError::NotSupported {
+                message: format!(
+                    "la carpeta de la skill '{}' es un symlink; resolvelo a mano",
+                    input.name
+                ),
+            });
+        }
+    }
+
+    // Al editar con body vacío, preservar el body existente.
+    let body = if input.body.trim().is_empty() {
+        std::fs::read_to_string(&skill_md)
+            .map(|existing| split_frontmatter_body(&existing).1.to_string())
+            .unwrap_or_default()
+    } else {
+        input.body.clone()
+    };
+
+    let existed = skill_md.exists();
+    let content = render_skill_md(input, &body)?;
+
+    std::fs::create_dir_all(&dir).map_err(|source| WriteError::Io {
+        path: dir.display().to_string(),
+        source,
+    })?;
+
+    // Backup del previo (si había) + escritura atómica del ÚNICO SKILL.md.
+    // Nunca tocamos otros archivos de la carpeta.
+    backup_existing_skill_md(&skill_md, app_data, &input.name)?;
+    crate::safe_write::atomic_write(&skill_md, &content)?;
+
+    // Changelog best-effort (no rompe el upsert si falla).
+    let action = if existed {
+        changelog::MutationAction::Edit
+    } else {
+        changelog::MutationAction::Add
+    };
+    let _ = changelog::append(changelog::MutationLog::new(
+        crate::domain::AppId::ClaudeCode,
+        input.scope,
+        skill_md.display().to_string(),
+        action,
+        input.name.clone(),
+        None,
+    ));
+
+    Ok(())
+}
+
+/// Crea o edita una skill escribiendo su `SKILL.md` de forma segura.
+pub fn upsert_skill(input: &SkillInput) -> Result<(), WriteError> {
+    let user_dir = user_skills_dir()?;
+    let app_data = paths::app_data_dir()?;
+    upsert_skill_at(input, &user_dir, &app_data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,5 +818,126 @@ mod tests {
             .flatten()
             .any(|e| e.path().join("SKILL.md").exists());
         assert!(found, "la skill debe seguir existiendo en deleted-skills");
+    }
+
+    fn input(name: &str, description: &str, body: &str) -> SkillInput {
+        SkillInput {
+            scope: Scope::User,
+            project_path: None,
+            name: name.to_string(),
+            description: description.to_string(),
+            version: None,
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn upsert_creates_valid_skill_md_with_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+
+        upsert_skill_at(&input("nueva", "hace algo útil", "# Título\ncontenido"), &user, &app)
+            .unwrap();
+
+        let content = std::fs::read_to_string(user.join("nueva").join("SKILL.md")).unwrap();
+        let fm = parse_frontmatter(&content);
+        assert_eq!(fm.name.as_deref(), Some("nueva"));
+        assert_eq!(fm.description.as_deref(), Some("hace algo útil"));
+        assert!(content.contains("# Título"));
+        assert!(content.contains("contenido"));
+    }
+
+    #[test]
+    fn upsert_does_not_clobber_sibling_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        // Skill con un archivo hermano (script) además del SKILL.md.
+        let skill_dir = user.join("con-script");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("run.py"), "print('hola')").unwrap();
+
+        upsert_skill_at(&input("con-script", "desc", "body nuevo"), &user, &app).unwrap();
+
+        // El hermano sigue intacto.
+        assert_eq!(
+            std::fs::read_to_string(skill_dir.join("run.py")).unwrap(),
+            "print('hola')"
+        );
+        assert!(skill_dir.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn upsert_rejects_traversal_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+
+        let evil = input("../../etc/evil", "desc", "body");
+        assert!(upsert_skill_at(&evil, &user, &app).is_err());
+    }
+
+    #[test]
+    fn upsert_requires_non_empty_description() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+
+        assert!(upsert_skill_at(&input("x", "   ", "body"), &user, &app).is_err());
+    }
+
+    #[test]
+    fn upsert_edit_with_empty_body_preserves_existing_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+
+        upsert_skill_at(&input("edit-me", "v1", "CUERPO ORIGINAL"), &user, &app).unwrap();
+        // Editar solo la descripción, con body vacío.
+        upsert_skill_at(&input("edit-me", "v2 desc", ""), &user, &app).unwrap();
+
+        let content = std::fs::read_to_string(user.join("edit-me").join("SKILL.md")).unwrap();
+        let fm = parse_frontmatter(&content);
+        assert_eq!(fm.description.as_deref(), Some("v2 desc"));
+        assert!(content.contains("CUERPO ORIGINAL"), "el body debía preservarse");
+    }
+
+    #[test]
+    fn upsert_backs_up_previous_skill_md_on_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+
+        upsert_skill_at(&input("bkp", "desc", "PRIMERA"), &user, &app).unwrap();
+        upsert_skill_at(&input("bkp", "desc", "SEGUNDA"), &user, &app).unwrap();
+
+        let backups = app.join("backups").join("skills");
+        let has_backup = std::fs::read_dir(&backups)
+            .unwrap()
+            .flatten()
+            .any(|e| std::fs::read_to_string(e.path()).map(|c| c.contains("PRIMERA")).unwrap_or(false));
+        assert!(has_backup, "debía existir un backup con el contenido previo");
+    }
+
+    #[test]
+    fn upsert_refuses_symlinked_skill_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("skills");
+        std::fs::create_dir_all(&user).unwrap();
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        // La carpeta de la skill es un symlink a un dir externo.
+        let external = dir.path().join("external");
+        std::fs::create_dir_all(&external).unwrap();
+        std::os::unix::fs::symlink(&external, user.join("linked")).unwrap();
+
+        assert!(upsert_skill_at(&input("linked", "desc", "body"), &user, &app).is_err());
     }
 }

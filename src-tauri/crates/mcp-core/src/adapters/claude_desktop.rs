@@ -126,6 +126,7 @@ fn parse_installation(name: &str, value: &Value, config_path: &str) -> McpInstal
             config_path: config_path.to_string(),
             enabled: true,
             vault_keys: Vec::new(),
+            builtin: false,
         };
     };
 

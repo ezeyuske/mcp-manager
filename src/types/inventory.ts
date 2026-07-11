@@ -27,6 +27,18 @@ export interface McpInstallation {
   configPath: string;
   /** false = deshabilitado (guardado en el sidecar, fuera del config). */
   enabled: boolean;
+  /** true solo para la entrada interna del MCP built-in de la app. No se
+   *  edita ni elimina directamente: se gobierna con el toggle del built-in. */
+  builtin?: boolean;
+}
+
+/** Estado del MCP built-in propio de la app (espejo de BuiltinState en Rust). */
+export interface BuiltinState {
+  enabled: boolean;
+  /** Clientes donde está registrado (scope user). */
+  targets: AppId[];
+  /** Path absoluto del binario sidecar con el que se registró. */
+  serverPath?: string | null;
 }
 
 /** Secreto del vault (keychain). El valor nunca viaja salvo por vault_reveal. */
