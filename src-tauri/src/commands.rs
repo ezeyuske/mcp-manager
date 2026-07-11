@@ -1,136 +1,23 @@
-use crate::adapters::all_adapters;
-use crate::changelog::MutationLog;
-use crate::disabled;
-use crate::domain::{AppId, Inventory, McpServerConfig, McpStatus, Scope};
-use crate::mutations::{self, McpTarget};
-use crate::projects;
-use crate::safe_write;
-use crate::vault::{self, VaultSecretInfo};
+use mcp_core::changelog::MutationLog;
+use mcp_core::disabled;
+use mcp_core::domain::{AppId, Inventory, McpServerConfig, Scope};
+use mcp_core::mutations::{self, McpTarget};
+use mcp_core::projects;
+use mcp_core::safe_write;
+use mcp_core::vault::{self, VaultSecretInfo};
 
-/// Recorre todos los adapters de apps soportadas y arma un inventario
-/// unificado. Si un adapter falla al leer su config (JSON corrupto,
-/// error de I/O), el error queda acotado a `AppInfo.error` de esa app
-/// puntual y el resto del inventario se arma igual: nunca devolvemos
-/// `Err` global por un problema de una sola app.
-///
-/// Además de lo que reportan los adapters, se suman:
-/// - Las entradas actualmente deshabilitadas (sidecar `disabled.json`),
-///   con `status: disabled` y `enabled: false`.
-/// - Las entradas de los `.mcp.json` de proyectos registrados
-///   (`projects.json`), como scope Project de Claude Code.
+/// Inventario unificado de MCPs. La lógica vive en `mcp_core::inventory`
+/// (única fuente de verdad, compartida con la tool `list_inventory` del
+/// servidor MCP). `build()` nunca falla globalmente: los errores de un
+/// adapter quedan acotados a `AppInfo.error` de esa app puntual.
 #[tauri::command]
 pub fn get_inventory() -> Result<Inventory, String> {
-    let mut apps: Vec<crate::domain::AppInfo> = Vec::new();
-    let mut installations: Vec<crate::domain::McpInstallation> = Vec::new();
-
-    for adapter in all_adapters() {
-        let mut info = adapter.detect();
-
-        if info.installed {
-            match adapter.read() {
-                Ok(mut found) => installations.append(&mut found),
-                Err(err) => info.error = Some(err.to_string()),
-            }
-        }
-
-        apps.push(info);
-    }
-
-    // Proyectos registrados: leemos su .mcp.json standalone (si existe).
-    if let Ok(project_paths) = projects::list() {
-        for project_path in project_paths {
-            let mcp_json_path = std::path::Path::new(&project_path).join(".mcp.json");
-            if !mcp_json_path.exists() {
-                continue;
-            }
-
-            let Ok(raw) = std::fs::read_to_string(&mcp_json_path) else {
-                continue;
-            };
-            let Ok(file) = serde_json::from_str::<crate::domain::McpJsonFile>(&raw) else {
-                continue;
-            };
-
-            for (name, value) in file.mcp_servers.iter() {
-                let Ok(cfg) = serde_json::from_value::<McpServerConfig>(value.clone()) else {
-                    continue;
-                };
-                installations.push(crate::adapters::build_installation(
-                    name,
-                    AppId::ClaudeCode,
-                    Scope::Project,
-                    Some(project_path.clone()),
-                    cfg,
-                    mcp_json_path.display().to_string(),
-                ));
-            }
-        }
-    }
-
-    // Entradas deshabilitadas: se muestran con status Disabled y
-    // enabled=false, para que el frontend pueda listarlas/reactivarlas.
-    if let Ok(disabled_entries) = disabled::list_disabled() {
-        for (_key, entry) in disabled_entries {
-            let cfg: McpServerConfig =
-                serde_json::from_value(entry.config.clone()).unwrap_or(McpServerConfig {
-                    r#type: None,
-                    command: None,
-                    args: Vec::new(),
-                    env: serde_json::Map::new(),
-                    url: None,
-                    extra: serde_json::Map::new(),
-                });
-
-            let target = McpTarget {
-                app: entry.app,
-                scope: entry.scope,
-                project_path: entry.project_path.clone(),
-                name: entry.name.clone(),
-            };
-            let config_path = mutations::resolve_target_path(&target)
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
-
-            let mut installation = crate::adapters::build_installation(
-                &entry.name,
-                entry.app,
-                entry.scope,
-                entry.project_path,
-                cfg,
-                config_path,
-            );
-            installation.status = McpStatus::Disabled;
-            installation.enabled = false;
-            installations.push(installation);
-        }
-    }
-
-    // Cruzamos con el vault para poblar `vault_keys`: subconjunto de
-    // `env_keys` que tiene un binding activo. Se hace acá (y no dentro de
-    // `build_installation`) para que `adapters` no necesite conocer el
-    // vault; si el vault no está disponible por algún motivo, cada
-    // instalación simplemente queda con `vault_keys` vacío en vez de
-    // tumbar el inventario entero.
-    for installation in installations.iter_mut() {
-        let target = McpTarget {
-            app: installation.app,
-            scope: installation.scope,
-            project_path: installation.project_path.clone(),
-            name: installation.name.clone(),
-        };
-        if let Ok(bindings) = vault::bindings_for_target(&target) {
-            installation.vault_keys = bindings.into_iter().map(|(env_key, _)| env_key).collect();
-        }
-    }
-
-    Ok(Inventory {
-        apps,
-        installations,
-    })
+    Ok(mcp_core::inventory::build())
 }
 
 #[tauri::command]
 pub fn upsert_mcp(target: McpTarget, config: McpServerConfig) -> Result<(), String> {
+    guard_not_builtin(&target, "editar")?;
     mutations::upsert(&target, config)
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -138,6 +25,7 @@ pub fn upsert_mcp(target: McpTarget, config: McpServerConfig) -> Result<(), Stri
 
 #[tauri::command]
 pub fn delete_mcp(target: McpTarget) -> Result<(), String> {
+    guard_not_builtin(&target, "eliminar")?;
     mutations::delete(&target)
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -174,7 +62,7 @@ pub fn copy_mcp(
 
 #[tauri::command]
 pub fn list_changelog() -> Result<Vec<MutationLog>, String> {
-    crate::changelog::list().map_err(|e| e.to_string())
+    mcp_core::changelog::list().map_err(|e| e.to_string())
 }
 
 /// Restaura un backup previamente creado sobre `target_path`: primero
@@ -189,8 +77,8 @@ pub fn restore_backup(backup_path: String, target_path: String) -> Result<(), St
 fn restore_backup_impl(
     backup_path: &str,
     target_path: &str,
-) -> Result<(), crate::error::WriteError> {
-    use crate::error::WriteError;
+) -> Result<(), mcp_core::error::WriteError> {
+    use mcp_core::error::WriteError;
 
     let backup_path = std::path::Path::new(backup_path);
     let target_path = std::path::Path::new(target_path);
@@ -220,11 +108,11 @@ fn restore_backup_impl(
         AppId::ClaudeCode,
         Scope::User,
         target_path.display().to_string(),
-        crate::changelog::MutationAction::Restore,
+        mcp_core::changelog::MutationAction::Restore,
         String::new(),
         Some(backup_path.display().to_string()),
     );
-    let _ = crate::changelog::append(log);
+    let _ = mcp_core::changelog::append(log);
 
     Ok(())
 }
@@ -245,21 +133,21 @@ pub fn list_projects() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn get_skills() -> Result<Vec<crate::skills::Skill>, String> {
-    crate::skills::read_skills().map_err(|e| e.to_string())
+pub fn get_skills() -> Result<Vec<mcp_core::skills::Skill>, String> {
+    mcp_core::skills::read_skills().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_skill_enabled(
-    target: crate::skills::SkillTarget,
+    target: mcp_core::skills::SkillTarget,
     enabled: bool,
 ) -> Result<(), String> {
-    crate::skills::set_skill_enabled(&target, enabled).map_err(|e| e.to_string())
+    mcp_core::skills::set_skill_enabled(&target, enabled).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_skill(target: crate::skills::SkillTarget) -> Result<(), String> {
-    crate::skills::delete_skill(&target).map_err(|e| e.to_string())
+pub fn delete_skill(target: mcp_core::skills::SkillTarget) -> Result<(), String> {
+    mcp_core::skills::delete_skill(&target).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------
@@ -295,4 +183,87 @@ pub fn bind_env_secret(target: McpTarget, env_key: String, secret_name: String) 
 #[tauri::command]
 pub fn unbind_env_secret(target: McpTarget, env_key: String) -> Result<(), String> {
     vault::unbind(&target, &env_key).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------
+// MCP built-in propio de la app + escritura de skills.
+// ---------------------------------------------------------------------
+
+/// Rechaza mutaciones directas sobre la entrada interna del built-in
+/// (nombre reservado `mcp-manager`, scope user). Se gobierna con el toggle
+/// del built-in, no con upsert/delete directos. Defensa en profundidad:
+/// el frontend además oculta esas acciones.
+fn guard_not_builtin(target: &McpTarget, verbo: &str) -> Result<(), String> {
+    if target.scope == Scope::User && target.name == mcp_core::builtin::BUILTIN_NAME {
+        return Err(format!(
+            "la entrada '{}' es interna y no se puede {} directamente: usá el toggle del built-in",
+            mcp_core::builtin::BUILTIN_NAME,
+            verbo
+        ));
+    }
+    Ok(())
+}
+
+/// Resuelve el path absoluto del binario sidecar `mcp-server`, ubicado
+/// junto al ejecutable principal (dev: `target/<profile>/`; bundleado:
+/// junto al binario de la app dentro del bundle). Ese path es lo que se
+/// escribe como `command` en el config del cliente, porque es el cliente
+/// (Claude) quien spawnea el proceso, no esta app.
+fn resolve_sidecar_path() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| "no se pudo resolver el directorio del ejecutable".to_string())?;
+    let name = if cfg!(windows) {
+        "mcp-server.exe"
+    } else {
+        "mcp-server"
+    };
+    let candidate = dir.join(name);
+    if candidate.exists() {
+        Ok(candidate.to_string_lossy().to_string())
+    } else {
+        Err(format!(
+            "no se encontró el binario mcp-server en {}",
+            candidate.display()
+        ))
+    }
+}
+
+#[tauri::command]
+pub fn get_builtin_status() -> Result<mcp_core::builtin::BuiltinState, String> {
+    mcp_core::builtin::read_state().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_builtin_enabled(targets: Vec<AppId>, enabled: bool) -> Result<(), String> {
+    let server_path = resolve_sidecar_path()?;
+    mcp_core::builtin::set_enabled(&targets, enabled, &server_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn upsert_skill(input: mcp_core::skills::SkillInput) -> Result<(), String> {
+    mcp_core::skills::upsert_skill(&input).map_err(|e| e.to_string())
+}
+
+/// Al iniciar la app: si el built-in está activo, re-resuelve el path del
+/// sidecar y re-registra SOLO si cambió (p. ej. tras mover/actualizar el
+/// .app). Best-effort: nunca panickea ni traba el arranque. No reescribe
+/// nada si el path no cambió, para no generar backups en cada arranque.
+pub fn heal_builtin_on_startup() {
+    let Ok(state) = mcp_core::builtin::read_state() else {
+        return;
+    };
+    if !state.enabled || state.targets.is_empty() {
+        return;
+    }
+    let Ok(path) = resolve_sidecar_path() else {
+        return;
+    };
+    if state.server_path.as_deref() == Some(path.as_str()) {
+        return; // sin drift: nada que healear
+    }
+    if let Err(e) = mcp_core::builtin::set_enabled(&state.targets, true, &path) {
+        eprintln!("mcp-manager: no se pudo re-registrar el built-in al iniciar: {e}");
+    }
 }

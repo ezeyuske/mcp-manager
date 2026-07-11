@@ -59,6 +59,11 @@ pub struct McpInstallation {
     /// instalación, para no acoplar `adapters`/`build_installation` (que
     /// no conocen el vault) con `vault.json`.
     pub vault_keys: Vec<String>,
+    /// `true` solo para la entrada del servidor MCP propio de mcp-manager
+    /// (ver `builtin.rs`). El frontend la trata como interna: no se puede
+    /// eliminar ni editar directamente, se gobierna con el toggle del
+    /// built-in. Se marca en `inventory::build`, no en los adapters.
+    pub builtin: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

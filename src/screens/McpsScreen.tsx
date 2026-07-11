@@ -12,11 +12,14 @@ import {
   ArrowLeftRight,
   Trash2,
   Lock,
+  Boxes,
+  Check,
 } from "lucide-react";
 import { ScreenShell } from "./ScreenShell";
 import { McpFormModal } from "./mcp/McpFormModal";
 import { SegmentedControl, Toggle, Modal, Button, Input } from "../components";
 import { useInventory } from "../store/inventory";
+import { useBuiltin } from "../store/builtin";
 import { useMutations } from "../store/mutations";
 import {
   APP_LABEL,
@@ -44,6 +47,8 @@ type Dialog =
 
 export function McpsScreen() {
   const { status, inventory, error, mocked, load } = useInventory();
+  const loadBuiltin = useBuiltin((s) => s.load);
+  const builtinStatus = useBuiltin((s) => s.status);
   const [filter, setFilter] = useState<"all" | AppId>("all");
   const [dialog, setDialog] = useState<Dialog>(null);
 
@@ -51,8 +56,15 @@ export function McpsScreen() {
     if (status === "idle") load();
   }, [status, load]);
 
+  useEffect(() => {
+    if (builtinStatus === "idle") loadBuiltin();
+  }, [builtinStatus, loadBuiltin]);
+
   const unified = useMemo(
-    () => unify(inventory?.installations ?? []),
+    () =>
+      unify(
+        (inventory?.installations ?? []).filter((i) => !i.builtin),
+      ),
     [inventory],
   );
   const visible = useMemo(
@@ -85,6 +97,8 @@ export function McpsScreen() {
         </div>
       }
     >
+      <BuiltinCard />
+
       <div className="mb-5 flex flex-wrap gap-2.5">
         {(inventory?.apps ?? []).map((app) => (
           <div
@@ -198,6 +212,138 @@ export function McpsScreen() {
         <DuplicateDialog inst={dialog.inst} onClose={() => setDialog(null)} />
       )}
     </ScreenShell>
+  );
+}
+
+const BUILTIN_TARGETS: AppId[] = ["claude-code", "claude-desktop"];
+
+function BuiltinCard() {
+  const state = useBuiltin((s) => s.state);
+  const busy = useBuiltin((s) => s.busy);
+  const setEnabled = useBuiltin((s) => s.setEnabled);
+
+  const enabled = state?.enabled ?? false;
+  // Selección local de destinos: refleja los targets activos; al estar apagado
+  // arranca con Claude Code preseleccionado como default limpio.
+  const [selected, setSelected] = useState<AppId[]>(["claude-code"]);
+
+  useEffect(() => {
+    if (state && state.targets.length > 0) setSelected(state.targets);
+  }, [state]);
+
+  function toggleTarget(id: AppId) {
+    const next = selected.includes(id)
+      ? selected.filter((t) => t !== id)
+      : [...selected, id];
+    setSelected(next);
+    // Reconciliación en vivo: si ya está activo, re-aplicar los destinos.
+    // Quedarse sin destinos equivale a desactivar.
+    if (enabled) {
+      if (next.length === 0) setEnabled([], false);
+      else setEnabled(next, true);
+    }
+  }
+
+  function toggleMain(on: boolean) {
+    if (on) {
+      const targets = selected.length > 0 ? selected : ["claude-code" as AppId];
+      if (selected.length === 0) setSelected(targets);
+      setEnabled(targets, true);
+    } else {
+      setEnabled([], false);
+    }
+  }
+
+  return (
+    <div
+      className="ds-card mb-5 px-5 py-4"
+      style={{
+        borderColor: enabled ? "var(--accent)" : "var(--line)",
+        boxShadow: enabled
+          ? "0 0 20px var(--accent-glow), var(--shadow-card)"
+          : undefined,
+      }}
+    >
+      <div className="flex items-start gap-4">
+        <div
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] border border-[var(--line)]"
+          style={{
+            background: "var(--accent-soft)",
+            boxShadow: enabled ? "0 0 12px var(--accent-glow)" : "none",
+          }}
+        >
+          <Boxes size={20} style={{ color: "var(--accent-strong)" }} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[15px] font-semibold text-ink">
+              MCP Manager
+            </span>
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium"
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent-strong)",
+              }}
+            >
+              built-in
+            </span>
+          </div>
+          <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted">
+            Deja que Claude gestione tus MCPs y skills desde adentro.
+          </p>
+          <p className="mt-1 text-[12px] text-faint">
+            {enabled && state && state.targets.length > 0
+              ? `Activo en ${state.targets.map((t) => APP_LABEL[t]).join(" y ")}`
+              : "Desactivado"}
+          </p>
+        </div>
+
+        <Toggle
+          checked={enabled}
+          onChange={toggleMain}
+          disabled={busy || (!enabled && selected.length === 0)}
+          label={enabled ? "Desactivar MCP Manager" : "Activar MCP Manager"}
+        />
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--line)] pt-3.5">
+        {BUILTIN_TARGETS.map((id) => {
+          const on = selected.includes(id);
+          return (
+            <button
+              key={id}
+              type="button"
+              role="checkbox"
+              aria-checked={on}
+              disabled={busy}
+              onClick={() => toggleTarget(id)}
+              className="flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors duration-[var(--dur)] disabled:opacity-40"
+              style={{
+                borderColor: on ? "var(--accent)" : "var(--line)",
+                background: on ? "var(--accent-soft)" : "var(--color-surface-2)",
+                color: on ? "var(--accent-strong)" : "var(--color-ink-soft)",
+                boxShadow: on ? "0 0 10px var(--accent-glow)" : "none",
+              }}
+            >
+              <span
+                className="flex h-3.5 w-3.5 items-center justify-center rounded-[5px] border"
+                style={{
+                  borderColor: on ? "var(--accent)" : "var(--line-strong)",
+                  background: on ? "var(--accent)" : "transparent",
+                }}
+              >
+                {on && (
+                  <Check size={11} strokeWidth={3} style={{ color: "var(--accent-contrast)" }} />
+                )}
+              </span>
+              {APP_LABEL[id]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

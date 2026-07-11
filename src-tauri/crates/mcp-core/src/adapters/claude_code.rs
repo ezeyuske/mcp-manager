@@ -153,6 +153,7 @@ fn parse_installation(
             config_path: config_path.to_string(),
             enabled: true,
             vault_keys: Vec::new(),
+            builtin: false,
         };
     };
 

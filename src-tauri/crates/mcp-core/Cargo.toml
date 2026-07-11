@@ -1,0 +1,27 @@
+[package]
+name = "mcp-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+dirs = { workspace = true }
+which = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+tempfile = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serial_test = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }

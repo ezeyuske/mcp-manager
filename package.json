@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:sidecar": "node scripts/stage-sidecar.mjs",
+    "build:sidecar:dev": "node scripts/stage-sidecar.mjs --debug",
     "preview": "vite preview",
     "tauri": "tauri"
   },

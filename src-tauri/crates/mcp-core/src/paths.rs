@@ -49,3 +49,9 @@ pub fn projects_file() -> Result<PathBuf, WriteError> {
 pub fn vault_file() -> Result<PathBuf, WriteError> {
     Ok(app_data_dir()?.join("vault.json"))
 }
+
+/// `~/.mcp-manager/builtin.json` (estado del MCP built-in propio de la
+/// app: si está activo y en qué clientes — ver `builtin.rs`).
+pub fn builtin_file() -> Result<PathBuf, WriteError> {
+    Ok(app_data_dir()?.join("builtin.json"))
+}

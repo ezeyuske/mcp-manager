@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.ezmartinez.mcp-manager",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm build:sidecar:dev && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build && pnpm build:sidecar",
     "frontendDist": "../dist"
   },
   "app": {
@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/mcp-server"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

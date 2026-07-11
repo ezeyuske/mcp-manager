@@ -22,3 +22,14 @@ export interface SkillTarget {
 export function skillTargetOf(s: Skill): SkillTarget {
   return { scope: s.scope, projectPath: s.projectPath ?? null, name: s.name };
 }
+
+/** Payload para crear/editar una skill (espejo de SkillInput en Rust). */
+export interface SkillInput {
+  scope: Scope;
+  projectPath?: string | null;
+  name: string;
+  description: string;
+  version?: string | null;
+  /** Cuerpo markdown tras el frontmatter. Vacío al editar = preserva el actual. */
+  body: string;
+}
