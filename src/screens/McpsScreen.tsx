@@ -201,6 +201,15 @@ export function McpsScreen() {
       )}
 
       <McpFormModal
+        // key por identidad del target: fuerza a React a montar una instancia
+        // fresca (re-ejecutando los useState) al abrir edición de otro MCP o
+        // al pasar de editar a agregar. Sin esto, el modal queda montado siempre
+        // y el estado inicial no se reinicializa al cambiar `initial` → form vacío.
+        key={
+          dialog?.kind === "edit"
+            ? `edit:${dialog.inst.app}:${dialog.inst.scope}:${dialog.inst.projectPath ?? ""}:${dialog.inst.name}`
+            : "add"
+        }
         open={dialog?.kind === "add" || dialog?.kind === "edit"}
         onClose={() => setDialog(null)}
         initial={dialog?.kind === "edit" ? dialog.inst : null}

@@ -24,9 +24,11 @@ impl ClaudeDesktopAdapter {
 
         // macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
         // Windows: %APPDATA%/Claude/claude_desktop_config.json
-        // `dirs::config_dir()` resuelve a "Application Support" en macOS
-        // y a `%APPDATA%` en Windows, respetando la convención de cada OS.
-        let config_dir = dirs::config_dir()?;
+        // `paths::config_dir()` resuelve a "Application Support" en macOS
+        // y a `%APPDATA%` en Windows, respetando la convención de cada OS
+        // (y redirige al sandbox de dev si `MCP_MANAGER_CONFIG_ROOT` está
+        // seteada — ver `paths::config_dir`).
+        let config_dir = crate::paths::config_dir()?;
         Some(config_dir.join("Claude").join("claude_desktop_config.json"))
     }
 

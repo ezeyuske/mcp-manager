@@ -23,6 +23,10 @@ interface MutationState {
     destProjectPath: string | null,
   ) => Promise<boolean>;
   registerProject: (path: string) => Promise<void>;
+  /** Lee on-demand el valor inline de una env var. Silencioso (sin toast
+   *  ni reload); usado por el editor para revelar valores bajo demanda.
+   *  Devuelve null en browser o ante error (con toast de error). */
+  readEnvValue: (target: McpTarget, envKey: string) => Promise<string | null>;
 }
 
 /** Corre una mutación: no-op informativo en browser; invoke + toast + reload en Tauri. */
@@ -94,6 +98,16 @@ export const useMutations = create<MutationState>((set) => ({
       await useInventory.getState().load();
     } catch (err) {
       useToast.getState().push("error", String(err));
+    }
+  },
+
+  readEnvValue: async (target, envKey) => {
+    if (!isTauri()) return "•••• (modo browser)";
+    try {
+      return await invoke<string>("read_env_value", { target, envKey });
+    } catch (err) {
+      useToast.getState().push("error", String(err));
+      return null;
     }
   },
 }));

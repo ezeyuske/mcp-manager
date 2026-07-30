@@ -70,16 +70,17 @@ fn resolve_target_file(target: &McpTarget) -> Result<TargetFile, WriteError> {
         }
         Scope::User => match target.app {
             AppId::ClaudeDesktop => {
-                let config_dir = dirs::config_dir().ok_or_else(|| WriteError::NotSupported {
-                    message: "no se pudo resolver el directorio de config del sistema"
-                        .to_string(),
-                })?;
+                let config_dir =
+                    crate::paths::config_dir().ok_or_else(|| WriteError::NotSupported {
+                        message: "no se pudo resolver el directorio de config del sistema"
+                            .to_string(),
+                    })?;
                 Ok(TargetFile::ClaudeDesktop(
                     config_dir.join("Claude").join("claude_desktop_config.json"),
                 ))
             }
             AppId::ClaudeCode => {
-                let home = dirs::home_dir().ok_or_else(|| WriteError::NotSupported {
+                let home = crate::paths::home_dir().ok_or_else(|| WriteError::NotSupported {
                     message: "no se pudo resolver el directorio home del usuario".to_string(),
                 })?;
                 Ok(TargetFile::ClaudeCodeUser(home.join(".claude.json")))
@@ -517,6 +518,132 @@ pub fn upsert_raw_value(target: &McpTarget, value: Value) -> Result<Option<PathB
     save_mcp_servers(&file, root, mcp_servers)
 }
 
+/// Lee el valor inline de UNA env var de un MCP existente, on-demand (el
+/// frontend nunca precarga valores). RECHAZA claves vault-bindeadas: el
+/// valor de un secreto solo se revela por el path explícito
+/// `vault_reveal`, nunca por acá (si no, `read_env_value` filtraría el
+/// valor inyectado del keychain fuera de ese único canal).
+pub fn read_env_value(target: &McpTarget, env_key: &str) -> Result<String, WriteError> {
+    let is_vault_bound = crate::vault::bindings_for_target(target)
+        .unwrap_or_default()
+        .into_iter()
+        .any(|(k, _)| k == env_key);
+    if is_vault_bound {
+        return Err(WriteError::NotSupported {
+            message: format!("'{env_key}' es un secreto del vault; usá vault_reveal para verlo"),
+        });
+    }
+
+    let entry = read_entry_value(target)?;
+    entry
+        .get("env")
+        .and_then(Value::as_object)
+        .and_then(|env| env.get(env_key))
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .ok_or_else(|| WriteError::TargetNotFound {
+            message: format!("la variable '{env_key}' no existe en '{}'", target.name),
+        })
+}
+
+/// Edita quirúrgicamente las env vars INLINE de un MCP EXISTENTE, sin
+/// reemplazar el mapa `env` completo. El frontend no tiene todos los
+/// valores actuales (se cargan on-demand), así que un reemplazo total
+/// borraría claves silenciosamente: por eso aplicamos `removals` y luego
+/// `upserts` sobre el `env` que ya está en disco, preservando cualquier
+/// otra clave de env, los campos desconocidos de la entrada (`extra`) y
+/// las claves top-level del archivo.
+///
+/// Las claves vault-bindeadas se SALTEAN (las gobierna el vault) y luego
+/// `apply_vault_bindings` reinyecta sus valores del keychain: el vault
+/// siempre gana. Una sola pasada = un backup + una escritura atómica +
+/// una validación. Si no hay cambios, no escribe (`Ok(None)`).
+pub fn set_mcp_env(
+    target: &McpTarget,
+    upserts: Map<String, Value>,
+    removals: Vec<String>,
+) -> Result<Option<PathBuf>, WriteError> {
+    let file = resolve_target_file(target)?;
+    set_mcp_env_into(&file, target, upserts, removals)
+}
+
+fn set_mcp_env_into(
+    file: &TargetFile,
+    target: &McpTarget,
+    upserts: Map<String, Value>,
+    removals: Vec<String>,
+) -> Result<Option<PathBuf>, WriteError> {
+    // Short-circuit: sin cambios no generamos un backup inútil.
+    if upserts.is_empty() && removals.is_empty() {
+        return Ok(None);
+    }
+
+    let (root, mut mcp_servers) = load_mcp_servers(file)?;
+
+    // Editamos un MCP existente: la entrada TIENE que existir.
+    let mut entry = mcp_servers
+        .get(&target.name)
+        .cloned()
+        .ok_or_else(|| WriteError::TargetNotFound {
+            message: format!(
+                "no se encontró la entrada '{}' en {}",
+                target.name,
+                file.path().display()
+            ),
+        })?;
+
+    // Claves gobernadas por el vault: intocables por este path inline.
+    let vault_keys: std::collections::HashSet<String> = crate::vault::bindings_for_target(target)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(env_key, _)| env_key)
+        .collect();
+
+    if !entry.is_object() {
+        entry = Value::Object(Map::new());
+    }
+    {
+        let obj = entry.as_object_mut().expect("garantizado arriba");
+        let env_obj = obj
+            .entry("env")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !env_obj.is_object() {
+            *env_obj = Value::Object(Map::new());
+        }
+        let env_map = env_obj.as_object_mut().expect("garantizado arriba");
+
+        for key in &removals {
+            if vault_keys.contains(key) {
+                continue;
+            }
+            env_map.remove(key);
+        }
+        for (key, value) in upserts {
+            if vault_keys.contains(&key) {
+                continue;
+            }
+            env_map.insert(key, value);
+        }
+
+        // Si el env quedó vacío, quitamos la clave "env" (espeja remove_env_value).
+        if env_map.is_empty() {
+            obj.remove("env");
+        }
+    }
+
+    // Defensa en profundidad: reinyecta los valores del keychain, el vault gana.
+    apply_vault_bindings(target, &mut entry)?;
+
+    mcp_servers.insert(target.name.clone(), entry);
+
+    let backup_path = save_mcp_servers(file, root, mcp_servers)?;
+    log_mutation(target, file, MutationAction::Edit, backup_path.clone());
+
+    Ok(backup_path)
+}
+
 /// Path del archivo destino, expuesto para que `disabled.rs`/`commands.rs`
 /// puedan reportarlo sin duplicar la lógica de resolución.
 pub fn resolve_target_path(target: &McpTarget) -> Result<PathBuf, WriteError> {
@@ -782,6 +909,105 @@ mod tests {
         // posición ni la de sus hermanas).
         let written_keys: Vec<String> = written.as_object().unwrap().keys().cloned().collect();
         assert_eq!(written_keys, original_keys);
+    }
+
+    /// `set_mcp_env` agrega/edita claves inline preservando el resto del
+    /// env, los campos desconocidos de la entrada y las claves top-level.
+    #[test]
+    fn set_mcp_env_upserts_preserving_other_env_and_foreign_keys() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("claude_desktop_config.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "coworkUserFilesPath": "/keep/me",
+                "mcpServers": {
+                    "context7": {
+                        "command": "npx",
+                        "args": ["-y", "old"],
+                        "someFutureField": "keep-me",
+                        "env": { "KEEP": "untouched", "EDIT_ME": "before" }
+                    }
+                }
+            }"#,
+        )
+        .expect("setup");
+
+        let t = target("context7");
+        let mut upserts = Map::new();
+        upserts.insert("EDIT_ME".to_string(), json!("after"));
+        upserts.insert("NEW_KEY".to_string(), json!("new-value"));
+
+        let file = TargetFile::ClaudeDesktop(path.clone());
+        set_mcp_env_into(&file, &t, upserts, vec![]).expect("set_mcp_env");
+
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let entry = &written["mcpServers"]["context7"];
+        assert_eq!(written["coworkUserFilesPath"], "/keep/me");
+        assert_eq!(entry["someFutureField"], "keep-me");
+        assert_eq!(entry["env"]["KEEP"], "untouched");
+        assert_eq!(entry["env"]["EDIT_ME"], "after");
+        assert_eq!(entry["env"]["NEW_KEY"], "new-value");
+    }
+
+    /// `set_mcp_env` con `removals` quita solo esas claves; si el env
+    /// queda vacío, se elimina la clave `env`.
+    #[test]
+    fn set_mcp_env_removals_and_empty_env_drops_env_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("claude_desktop_config.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "mcpServers": {
+                    "solo": {
+                        "command": "npx",
+                        "env": { "ONLY_KEY": "value" }
+                    }
+                }
+            }"#,
+        )
+        .expect("setup");
+
+        let t = target("solo");
+        let file = TargetFile::ClaudeDesktop(path.clone());
+        set_mcp_env_into(&file, &t, Map::new(), vec!["ONLY_KEY".to_string()])
+            .expect("set_mcp_env");
+
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let entry = &written["mcpServers"]["solo"];
+        assert_eq!(entry["command"], "npx");
+        assert!(entry.get("env").is_none(), "env vacío debe removerse");
+    }
+
+    /// Sin cambios ⇒ no escribe (no crea el archivo ni un backup).
+    #[test]
+    fn set_mcp_env_no_changes_is_noop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("claude_desktop_config.json");
+        std::fs::write(&path, r#"{"mcpServers": {"solo": {"command": "x"}}}"#).expect("setup");
+
+        let t = target("solo");
+        let file = TargetFile::ClaudeDesktop(path.clone());
+        let out = set_mcp_env_into(&file, &t, Map::new(), vec![]).expect("set_mcp_env");
+        assert!(out.is_none());
+    }
+
+    /// Editar env de un MCP inexistente ⇒ TargetNotFound.
+    #[test]
+    fn set_mcp_env_missing_entry_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("claude_desktop_config.json");
+        std::fs::write(&path, r#"{"mcpServers": {}}"#).expect("setup");
+
+        let t = target("ghost");
+        let mut upserts = Map::new();
+        upserts.insert("K".to_string(), json!("v"));
+        let file = TargetFile::ClaudeDesktop(path.clone());
+        let result = set_mcp_env_into(&file, &t, upserts, vec![]);
+        assert!(matches!(result, Err(WriteError::TargetNotFound { .. })));
     }
 
     #[test]

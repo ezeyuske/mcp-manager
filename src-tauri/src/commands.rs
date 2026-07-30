@@ -185,6 +185,33 @@ pub fn unbind_env_secret(target: McpTarget, env_key: String) -> Result<(), Strin
     vault::unbind(&target, &env_key).map_err(|e| e.to_string())
 }
 
+/// Lee on-demand el valor INLINE de una env var (nunca precargado). Falla
+/// si la clave está vault-bindeada: para esos casos el frontend usa
+/// `vault_reveal`, el único canal que expone valores del keychain.
+#[tauri::command]
+pub fn read_env_value(target: McpTarget, env_key: String) -> Result<String, String> {
+    mutations::read_env_value(&target, &env_key).map_err(|e| e.to_string())
+}
+
+/// Edición quirúrgica por-clave del `env` inline de un MCP existente:
+/// aplica `upserts`/`removals` sin reemplazar el mapa completo,
+/// preservando el resto del env y las claves ajenas del config.
+#[tauri::command]
+pub fn set_mcp_env(
+    target: McpTarget,
+    upserts: std::collections::HashMap<String, String>,
+    removals: Vec<String>,
+) -> Result<(), String> {
+    guard_not_builtin(&target, "editar")?;
+    let upserts_map = upserts
+        .into_iter()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect();
+    mutations::set_mcp_env(&target, upserts_map, removals)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------
 // MCP built-in propio de la app + escritura de skills.
 // ---------------------------------------------------------------------
