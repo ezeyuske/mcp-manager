@@ -20,7 +20,20 @@ use crate::error::WriteError;
 use crate::mutations::{self, McpTarget};
 use crate::paths::vault_file;
 
-const SERVICE: &str = "mcp-manager";
+/// Namespace del keychain del OS. Con el sandbox de dev activo
+/// (`MCP_MANAGER_CONFIG_ROOT`) usamos un service SEPARADO: así ninguna
+/// operación de vault en modo dev puede leer, pisar ni borrar una entrada
+/// real del keychain del usuario (mismo principio de aislamiento que
+/// aplica a los configs JSON — ver `paths::sandbox_active`). El keychain
+/// no es un archivo, así que `MCP_MANAGER_CONFIG_ROOT` no lo redirige
+/// solo; este split del service es lo que lo aísla.
+fn service() -> &'static str {
+    if crate::paths::sandbox_active() {
+        "mcp-manager-sandbox"
+    } else {
+        "mcp-manager"
+    }
+}
 
 // ---------------------------------------------------------------------
 // Modelo de `vault.json`. SOLO metadata: nombres de secretos existentes
@@ -98,7 +111,7 @@ fn write_all_at(path: &Path, file: &VaultFile) -> Result<(), WriteError> {
 // ---------------------------------------------------------------------
 
 fn entry(name: &str) -> Result<keyring::Entry, WriteError> {
-    keyring::Entry::new(SERVICE, name).map_err(|source| WriteError::Keychain {
+    keyring::Entry::new(service(), name).map_err(|source| WriteError::Keychain {
         message: format!("no se pudo abrir el keychain para '{name}': {source}"),
     })
 }

@@ -1,4 +1,4 @@
-import { Plus, Trash2, Lock, LockOpen } from "lucide-react";
+import { Plus, Trash2, Lock, LockOpen, Eye } from "lucide-react";
 import { Input } from "./Input";
 
 export interface KeyValue {
@@ -6,6 +6,15 @@ export interface KeyValue {
   value: string;
   /** Si es secreto, se guarda en el vault (keychain) y se enmascara. */
   secret?: boolean;
+  /** Clave tal como está en disco al abrir el editor (undefined = fila nueva). */
+  originalKey?: string;
+  /** Si la clave estaba vault-bindeada en disco. */
+  originalSecret?: boolean;
+  /** El valor fue cargado desde el backend o tipeado por el usuario. En
+   *  modo edición las filas existentes arrancan con loaded=false (on-demand). */
+  loaded?: boolean;
+  /** El usuario editó el valor. */
+  dirty?: boolean;
 }
 
 interface KeyValueEditorProps {
@@ -15,6 +24,10 @@ interface KeyValueEditorProps {
   valuePlaceholder?: string;
   /** Habilita el toggle de "secreto" por fila (vault). */
   allowSecret?: boolean;
+  /** Carga on-demand el valor actual de una fila existente enmascarada.
+   *  Devuelve el valor o null. Si se provee, las filas con loaded===false
+   *  se muestran enmascaradas con un botón para revelar. */
+  onReveal?: (index: number) => Promise<string | null>;
 }
 
 /**
@@ -28,6 +41,7 @@ export function KeyValueEditor({
   keyPlaceholder = "CLAVE",
   valuePlaceholder = "valor",
   allowSecret = false,
+  onReveal,
 }: KeyValueEditorProps) {
   const update = (i: number, patch: Partial<KeyValue>) =>
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
@@ -35,14 +49,24 @@ export function KeyValueEditor({
   const remove = (i: number) =>
     onChange(entries.filter((_, idx) => idx !== i));
 
-  const add = () => onChange([...entries, { key: "", value: "" }]);
+  // Filas nuevas: loaded=true (el valor lo tipea el usuario, no hay nada
+  // que revelar). Sin originalKey ⇒ es nueva.
+  const add = () => onChange([...entries, { key: "", value: "", loaded: true }]);
+
+  async function reveal(i: number) {
+    if (!onReveal) return;
+    const value = await onReveal(i);
+    if (value !== null) update(i, { value, loaded: true });
+  }
 
   return (
     <div className="flex flex-col gap-2">
       {entries.length === 0 && (
         <p className="text-[12px] text-faint">Sin variables de entorno.</p>
       )}
-      {entries.map((e, i) => (
+      {entries.map((e, i) => {
+        const masked = !!onReveal && e.loaded === false;
+        return (
         <div key={i} className="flex items-center gap-2">
           <div className="w-2/5">
             <Input
@@ -56,11 +80,30 @@ export function KeyValueEditor({
             <Input
               mono
               type={e.secret ? "password" : "text"}
-              value={e.value}
-              placeholder={e.secret ? "•••• (al keychain)" : valuePlaceholder}
-              onChange={(ev) => update(i, { value: ev.currentTarget.value })}
+              value={masked ? "" : e.value}
+              disabled={masked}
+              placeholder={
+                masked
+                  ? "•••••••• (revelar para editar)"
+                  : e.secret
+                    ? "•••• (al keychain)"
+                    : valuePlaceholder
+              }
+              onChange={(ev) =>
+                update(i, { value: ev.currentTarget.value, dirty: true })
+              }
             />
           </div>
+          {masked && (
+            <button
+              onClick={() => reveal(i)}
+              aria-label="Revelar valor"
+              title="Revelar valor (se lee bajo demanda)"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-ink"
+            >
+              <Eye size={15} />
+            </button>
+          )}
           {allowSecret && (
             <button
               onClick={() => update(i, { secret: !e.secret })}
@@ -88,7 +131,8 @@ export function KeyValueEditor({
             <Trash2 size={15} />
           </button>
         </div>
-      ))}
+        );
+      })}
       <button
         onClick={add}
         className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-[10px] border border-[var(--line)] px-2.5 py-1.5 text-[12px] font-medium text-muted transition-colors duration-[var(--dur)] hover:border-[var(--line-strong)] hover:text-ink"

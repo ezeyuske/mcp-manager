@@ -184,7 +184,9 @@ fn write_disabled(app_data: &Path, entries: &[DisabledSkill]) -> Result<(), Writ
 // ---------------------------------------------------------------------
 
 fn user_skills_dir() -> Result<PathBuf, WriteError> {
-    let home = dirs::home_dir().ok_or_else(|| WriteError::NotSupported {
+    // Con el sandbox de dev activo resuelve bajo `<root>/home` — ver
+    // `paths::home_dir`.
+    let home = crate::paths::home_dir().ok_or_else(|| WriteError::NotSupported {
         message: "no se pudo resolver el directorio home del usuario".to_string(),
     })?;
     Ok(home.join(".claude").join("skills"))

@@ -61,6 +61,8 @@
   --state-ok: #33c98a;
   --state-ok-glow: rgba(51, 201, 138, 0.53);
   --state-warn: #f2c14e;
+  --state-warn-text: #ffe0a3; /* texto/ícono warn sobre fondo oscuro */
+  --state-warn-soft: rgba(242, 193, 78, 0.14); /* fondos tenues warn */
   --state-danger: #f2555a;
   --state-danger-text: #ff9a9e; /* texto/ícono danger sobre fondo oscuro */
   --state-danger-contrast: #fff; /* texto sobre relleno danger (botón) */

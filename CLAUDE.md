@@ -16,6 +16,20 @@ Desktop app ("mcp-manager") built with **Tauri v2** (Rust backend) + **React 19 
 
 There is no test runner or linter configured yet.
 
+### Sandbox de desarrollo (aislamiento de configs reales)
+
+Setear `MCP_MANAGER_CONFIG_ROOT=<dir>` redirige TODA la resolución de paths
+de la app a ese directorio, para que `pnpm tauri dev` no toque los configs
+reales del usuario. Layout: `<dir>/home` reemplaza a `dirs::home_dir()`
+(`~/.claude.json`, `~/.claude/skills`, `~/.mcp-manager`) y `<dir>/config`
+reemplaza a `dirs::config_dir()` (config de Claude Desktop). El keychain,
+que no es un archivo, se aísla usando un service separado
+(`mcp-manager-sandbox`). Al arrancar con el sandbox activo, el proceso
+imprime un banner por stderr; si NO aparece, no estás aislado (revisá el
+nombre de la env var). Toda la lógica vive en `crates/mcp-core/src/paths.rs`
+(`home_dir` / `config_dir` / `sandbox_active`); no llamar `dirs::` directo
+desde adapters ni mutations — siempre vía `paths::`.
+
 ## Architecture
 
 The frontend↔backend boundary is the key thing to understand:

@@ -15,9 +15,10 @@ const LABEL: &str = "Claude Code";
 
 impl ClaudeCodeAdapter {
     /// `~/.claude.json`, igual en los tres OS (vive en el home del usuario,
-    /// no en el directorio de config del sistema).
+    /// no en el directorio de config del sistema). Con el sandbox de dev
+    /// activo resuelve bajo `<root>/home` — ver `paths::home_dir`.
     fn config_path() -> Option<PathBuf> {
-        dirs::home_dir().map(|home| home.join(".claude.json"))
+        crate::paths::home_dir().map(|home| home.join(".claude.json"))
     }
 
     fn read_file(path: &PathBuf) -> Result<ClaudeCodeFile, AdapterError> {

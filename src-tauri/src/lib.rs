@@ -2,13 +2,25 @@ mod commands;
 
 use commands::{
     bind_env_secret, copy_mcp, delete_mcp, delete_skill, duplicate_mcp, get_builtin_status,
-    get_inventory, get_skills, list_changelog, list_projects, register_project_dir, restore_backup,
-    set_builtin_enabled, set_mcp_enabled, set_skill_enabled, unbind_env_secret, unregister_project,
-    upsert_mcp, upsert_skill, vault_delete_secret, vault_list, vault_reveal, vault_set_secret,
+    get_inventory, get_skills, list_changelog, list_projects, read_env_value, register_project_dir,
+    restore_backup, set_builtin_enabled, set_mcp_enabled, set_mcp_env, set_skill_enabled,
+    unbind_env_secret, unregister_project, upsert_mcp, upsert_skill, vault_delete_secret,
+    vault_list, vault_reveal, vault_set_secret,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Aviso de arranque cuando el sandbox de desarrollo está activo: TODA
+    // la resolución de paths (configs ajenos incluidos) va a un directorio
+    // aislado y no se tocan los configs reales del usuario.
+    if mcp_core::paths::sandbox_active() {
+        eprintln!(
+            "[mcp-manager] SANDBOX DE DEV ACTIVO ({}): los configs reales de \
+             Claude Desktop/Code no serán tocados.",
+            mcp_core::paths::CONFIG_ROOT_ENV
+        );
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
@@ -36,6 +48,8 @@ pub fn run() {
             vault_reveal,
             bind_env_secret,
             unbind_env_secret,
+            read_env_value,
+            set_mcp_env,
             unregister_project,
             list_projects,
             get_skills,
