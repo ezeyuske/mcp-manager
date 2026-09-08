@@ -96,7 +96,9 @@ export function SkillFormModal({
           mono
           onChange={(e) => setName(e.currentTarget.value)}
           help={
-            editing ? "El nombre identifica la carpeta y no se cambia acá." : undefined
+            editing
+              ? "El nombre se cambia con la acción Renombrar de la lista."
+              : undefined
           }
         />
 

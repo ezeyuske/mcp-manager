@@ -16,6 +16,7 @@ pub mod inventory;
 pub mod mutations;
 pub mod paths;
 pub mod projects;
+pub mod rename;
 pub mod safe_write;
 pub mod skills;
 pub mod vault;

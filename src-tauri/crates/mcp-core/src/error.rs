@@ -59,6 +59,15 @@ pub enum WriteError {
         source: std::io::Error,
     },
 
+    #[error("nombre inválido: {message}")]
+    InvalidName { message: String },
+
+    /// El destino de la operación ya está ocupado (p. ej. renombrar a un
+    /// nombre que ya existe). Distinto de `Validation`, que es sobre el
+    /// contenido a escribir: acá todavía no se escribió nada.
+    #[error("{message} (en {path})")]
+    Conflict { path: String, message: String },
+
     #[error("operación no soportada: {message}")]
     NotSupported { message: String },
 
@@ -84,9 +93,7 @@ impl From<AdapterError> for WriteError {
     fn from(err: AdapterError) -> Self {
         match err {
             AdapterError::Io { path, source } => WriteError::Io { path, source },
-            AdapterError::InvalidJson { path, message } => {
-                WriteError::Validation { path, message }
-            }
+            AdapterError::InvalidJson { path, message } => WriteError::Validation { path, message },
         }
     }
 }

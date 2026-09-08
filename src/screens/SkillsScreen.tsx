@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Sparkles, FolderOpen, Trash2, AlertTriangle, Plus, Pencil } from "lucide-react";
+import {
+  Sparkles,
+  FolderOpen,
+  Trash2,
+  AlertTriangle,
+  Plus,
+  Pencil,
+  TextCursorInput,
+} from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ScreenShell } from "./ScreenShell";
 import { SkillFormModal } from "./skills/SkillFormModal";
-import { SegmentedControl, Toggle, Modal, Button } from "../components";
+import { SegmentedControl, Toggle, Modal, Button, Input } from "../components";
 import { useSkills } from "../store/skills";
 import { isTauri } from "../lib/tauri";
 import { useToast } from "../store/toast";
@@ -14,6 +22,7 @@ export function SkillsScreen() {
   const { status, skills, error, mocked, load } = useSkills();
   const [filter, setFilter] = useState<"all" | Scope>("all");
   const [toDelete, setToDelete] = useState<Skill | null>(null);
+  const [toRename, setToRename] = useState<Skill | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [toEdit, setToEdit] = useState<Skill | null>(null);
 
@@ -112,6 +121,7 @@ export function SkillsScreen() {
                 skill={s}
                 onEdit={() => openEdit(s)}
                 onDelete={() => setToDelete(s)}
+                onRename={() => setToRename(s)}
               />
             ))}
           </div>
@@ -127,6 +137,19 @@ export function SkillsScreen() {
       {toDelete && (
         <DeleteSkillModal skill={toDelete} onClose={() => setToDelete(null)} />
       )}
+      {toRename && (
+        <RenameSkillModal
+          skill={toRename}
+          takenNames={skills
+            .filter(
+              (s) =>
+                s.scope === toRename.scope &&
+                (s.projectPath ?? "") === (toRename.projectPath ?? ""),
+            )
+            .map((s) => s.name)}
+          onClose={() => setToRename(null)}
+        />
+      )}
 
       <SkillFormModal
         open={formOpen}
@@ -141,10 +164,12 @@ function SkillRow({
   skill,
   onEdit,
   onDelete,
+  onRename,
 }: {
   skill: Skill;
   onEdit: () => void;
   onDelete: () => void;
+  onRename: () => void;
 }) {
   const setEnabled = useSkills((s) => s.setEnabled);
   const pushToast = useToast((s) => s.push);
@@ -193,6 +218,18 @@ function SkillRow({
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
         <Pencil size={15} />
+      </button>
+      <button
+        onClick={onRename}
+        aria-label="Renombrar skill"
+        title="Renombrar"
+        className="flex h-8 w-8 items-center justify-center rounded-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-ink"
+        onMouseEnter={(e) =>
+          (e.currentTarget.style.background = "rgba(255,255,255,0.06)")
+        }
+        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      >
+        <TextCursorInput size={15} />
       </button>
       <button
         onClick={openFolder}
@@ -269,6 +306,90 @@ function DeleteSkillModal({
         </span>
         , no se borra del disco.
       </p>
+    </Modal>
+  );
+}
+
+/**
+ * Renombra una skill. Su identidad vive en dos lugares —el nombre de la
+ * carpeta y el `name:` del frontmatter—, y el backend actualiza los dos;
+ * el resto del SKILL.md queda intacto.
+ */
+function RenameSkillModal({
+  skill,
+  takenNames,
+  onClose,
+}: {
+  skill: Skill;
+  takenNames: string[];
+  onClose: () => void;
+}) {
+  const rename = useSkills((s) => s.rename);
+  const busy = useSkills((s) => s.busy);
+  const [newName, setNewName] = useState(skill.name);
+
+  const trimmed = newName.trim();
+  // Charset estricto: el nombre es a la vez carpeta y valor de YAML.
+  const problem =
+    trimmed === ""
+      ? "El nombre no puede estar vacío."
+      : !/^[A-Za-z0-9._-]+$/.test(trimmed)
+        ? "Solo letras y números ASCII, '-', '_' y '.'."
+        : trimmed !== skill.name && takenNames.includes(trimmed)
+          ? `Ya existe una skill llamada "${trimmed}" en este scope.`
+          : null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Renombrar ${skill.name}`}
+      subtitle={skill.scope === "user" ? "Global (user)" : "Proyecto"}
+      width={460}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={busy || problem !== null || trimmed === skill.name}
+            onClick={async () => {
+              const ok = await rename(skillTargetOf(skill), trimmed);
+              if (ok) onClose();
+            }}
+          >
+            Renombrar
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Input
+            label="Nuevo nombre"
+            value={newName}
+            mono
+            autoFocus
+            onChange={(e) => setNewName(e.currentTarget.value)}
+          />
+          {problem !== null && (
+            <span
+              className="text-[11.5px]"
+              style={{ color: "var(--state-danger-text)" }}
+            >
+              {problem}
+            </span>
+          )}
+        </div>
+
+        <p className="text-[12.5px] leading-relaxed text-muted">
+          Se mueve la carpeta{" "}
+          <span className="font-mono text-ink-soft">{skill.path}</span> y se
+          actualiza el <span className="font-mono text-ink-soft">name:</span> de
+          su SKILL.md. El resto del archivo no se toca, y queda un backup en
+          Actividad.
+        </p>
+      </div>
     </Modal>
   );
 }

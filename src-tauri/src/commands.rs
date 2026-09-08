@@ -3,6 +3,7 @@ use mcp_core::disabled;
 use mcp_core::domain::{AppId, Inventory, McpServerConfig, Scope};
 use mcp_core::mutations::{self, McpTarget};
 use mcp_core::projects;
+use mcp_core::rename;
 use mcp_core::safe_write;
 use mcp_core::vault::{self, VaultSecretInfo};
 
@@ -36,6 +37,76 @@ pub fn duplicate_mcp(target: McpTarget, new_name: String) -> Result<(), String> 
     mutations::duplicate(&target, &new_name)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Resultado de un rename multi-target. Cruzar varios archivos no puede
+/// ser atómico, así que en vez de reportar un éxito global se devuelve
+/// qué targets se renombraron y cuáles fallaron, para que la UI diga la
+/// verdad.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameReport {
+    pub renamed: Vec<McpTarget>,
+    pub failed: Vec<RenameFailure>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameFailure {
+    /// El target tal como se pidió renombrar, con el nombre VIEJO: sirve
+    /// para identificar qué fila falló. Ojo: si `applied` es `true`, ese
+    /// nombre ya no existe en disco.
+    pub target: McpTarget,
+    /// `true` si el rename SÍ se aplicó en disco y lo único que falló fue
+    /// reapuntar los secretos del vault. Existe para que ningún consumidor
+    /// tenga que parsear el string de `error` para saber el estado real.
+    pub applied: bool,
+    pub error: String,
+}
+
+/// Renombra un MCP en TODOS los targets recibidos (el frontend manda las
+/// installations del MCP unificado).
+///
+/// Los pasos por target y el porqué de su orden viven en
+/// `mcp_core::rename`, compartidos con el servidor MCP standalone. Acá
+/// solo se orquesta el multi-target:
+///
+/// - PREFLIGHT DE TODOS antes de escribir el primero, para que el modo de
+///   falla común (el nombre ya está tomado) aborte la operación completa
+///   sin tocar disco en vez de dejar la mitad de los configs renombrados.
+/// - Resultado PARCIAL explícito: cruzar varios archivos no puede ser
+///   atómico, así que un error de IO en pleno vuelo se reporta en
+///   `failed` en lugar de mentir con un éxito global.
+#[tauri::command]
+pub fn rename_mcp(targets: Vec<McpTarget>, new_name: String) -> Result<RenameReport, String> {
+    if targets.is_empty() {
+        return Err("no se recibió ningún MCP para renombrar".to_string());
+    }
+
+    // Preflight: sin escrituras. Cualquier fallo acá aborta todo.
+    let mut locations = Vec::with_capacity(targets.len());
+    for target in &targets {
+        guard_not_builtin(target, "renombrar")?;
+        locations.push(rename::preflight(target, &new_name).map_err(|e| e.to_string())?);
+    }
+
+    let mut report = RenameReport {
+        renamed: Vec::new(),
+        failed: Vec::new(),
+    };
+
+    for (target, location) in targets.iter().zip(locations) {
+        match rename::apply(target, &new_name, location) {
+            Ok(renamed) => report.renamed.push(renamed),
+            Err(e) => report.failed.push(RenameFailure {
+                target: target.clone(),
+                applied: e.vault_only,
+                error: e.message(&new_name),
+            }),
+        }
+    }
+
+    Ok(report)
 }
 
 #[tauri::command]
@@ -150,6 +221,14 @@ pub fn delete_skill(target: mcp_core::skills::SkillTarget) -> Result<(), String>
     mcp_core::skills::delete_skill(&target).map_err(|e| e.to_string())
 }
 
+/// Renombra una skill. A diferencia de los MCPs, la identidad de una
+/// skill vive en un único lugar por scope (su carpeta + el `name:` del
+/// frontmatter), así que no hace falta orquestar varios targets.
+#[tauri::command]
+pub fn rename_skill(target: mcp_core::skills::SkillTarget, new_name: String) -> Result<(), String> {
+    mcp_core::skills::rename_skill(&target, &new_name).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------
 // Comandos del vault de secrets. Los VALORES nunca cruzan hacia el
 // frontend salvo en `vault_reveal` (bajo demanda explícita del usuario).
@@ -176,7 +255,11 @@ pub fn vault_reveal(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn bind_env_secret(target: McpTarget, env_key: String, secret_name: String) -> Result<(), String> {
+pub fn bind_env_secret(
+    target: McpTarget,
+    env_key: String,
+    secret_name: String,
+) -> Result<(), String> {
     vault::bind(&target, &env_key, &secret_name).map_err(|e| e.to_string())
 }
 

@@ -181,7 +181,11 @@ mod tests {
         let config = Some(PathBuf::from("/Users/x/Library/Application Support"));
         // root == home real => descartado (sin sandbox).
         assert_eq!(
-            reject_real_dirs(Some(PathBuf::from("/Users/x")), home.clone(), config.clone()),
+            reject_real_dirs(
+                Some(PathBuf::from("/Users/x")),
+                home.clone(),
+                config.clone()
+            ),
             None
         );
         // root == config real => descartado.

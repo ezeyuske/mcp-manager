@@ -126,7 +126,10 @@ fn read_skill_dir(
     let fm = parse_frontmatter(&content);
 
     Some(Skill {
-        name: fm.name.filter(|s| !s.trim().is_empty()).unwrap_or(folder_name),
+        name: fm
+            .name
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(folder_name),
         description: fm.description.unwrap_or_default().trim().to_string(),
         version: fm.version,
         scope,
@@ -173,10 +176,12 @@ fn write_disabled(app_data: &Path, entries: &[DisabledSkill]) -> Result<(), Writ
     let serialized = serde_json::to_string_pretty(entries).map_err(|e| WriteError::Serialize {
         message: e.to_string(),
     })?;
-    std::fs::write(&path, serialized).map_err(|source| WriteError::Io {
-        path: path.display().to_string(),
-        source,
-    })
+    // Atómico (tmp + rename), aunque sea estado interno y no lleve el
+    // backup timestampeado que sí exigimos para configs ajenos: este
+    // manifest es la identidad autoritativa de TODAS las skills
+    // deshabilitadas, así que una escritura truncada las perdería todas
+    // de una vez, no solo la que se estaba tocando.
+    crate::safe_write::atomic_write(&path, &serialized)
 }
 
 // ---------------------------------------------------------------------
@@ -211,12 +216,22 @@ fn read_skills_at(user_dir: &Path, app_data: &Path, project_paths: &[String]) ->
 
     // Deshabilitadas (viven en el sidecar): se leen de ahí, enabled=false.
     for d in read_disabled(app_data) {
-        if let Some(skill) = read_skill_dir(
+        if let Some(mut skill) = read_skill_dir(
             Path::new(&d.sidecar_path),
             d.scope,
             d.project_path.clone(),
             false,
         ) {
+            // Para una skill deshabilitada el MANIFEST es la identidad
+            // autoritativa, no el frontmatter: es contra `d.name` que
+            // hacen matching `set_skill_enabled_at`, `delete_skill_at` y
+            // `rename_skill_at`. Si el nombre mostrado saliera del
+            // frontmatter y los dos discreparan (p. ej. un rename
+            // interrumpido entre reescribir el SKILL.md y guardar el
+            // manifest), el usuario vería un nombre sobre el que ninguna
+            // acción funcionaría. Con esto, el write del manifest es el
+            // único punto de commit del rename.
+            skill.name = d.name.clone();
             skills.push(skill);
         }
     }
@@ -325,11 +340,13 @@ fn skill_original_dir(target: &SkillTarget, user_dir: &Path) -> Result<PathBuf, 
     match target.scope {
         Scope::User => Ok(user_dir.join(&target.name)),
         Scope::Project => {
-            let project_path = target.project_path.as_ref().ok_or_else(|| {
-                WriteError::TargetNotFound {
-                    message: "scope Project requiere projectPath".to_string(),
-                }
-            })?;
+            let project_path =
+                target
+                    .project_path
+                    .as_ref()
+                    .ok_or_else(|| WriteError::TargetNotFound {
+                        message: "scope Project requiere projectPath".to_string(),
+                    })?;
             Ok(project_skills_dir(project_path).join(&target.name))
         }
     }
@@ -433,9 +450,10 @@ fn delete_skill_at(
         });
     }
 
-    let trash = app_data
-        .join("deleted-skills")
-        .join(format!("{}.{}", target.name, unique_suffix()));
+    let trash =
+        app_data
+            .join("deleted-skills")
+            .join(format!("{}.{}", target.name, unique_suffix()));
     move_dir(&source, &trash)?;
 
     if let Some(i) = disabled_idx {
@@ -457,22 +475,46 @@ pub fn delete_skill(target: &SkillTarget) -> Result<(), WriteError> {
 
 /// Separa un SKILL.md en `(frontmatter_yaml, body)`. Si no hay
 /// frontmatter, el contenido entero es body.
-fn split_frontmatter_body(content: &str) -> (Option<&str>, &str) {
-    let t = content.trim_start_matches('\u{feff}');
+/// Rango de bytes, dentro de `content`, del YAML del frontmatter (sin los
+/// `---` de apertura ni de cierre).
+///
+/// ÚNICA FUENTE DE VERDAD del límite frontmatter/body: la usan tanto
+/// `split_frontmatter_body` (lectura) como `rewrite_frontmatter_name`
+/// (rename). Tenerla duplicada es peligroso de verdad: una detección más
+/// laxa en el camino de escritura que en el de lectura hace que el rename
+/// tome como cierre una línea `---` que en realidad está DENTRO de un
+/// bloque literal YAML (`description: |`), y termine insertando una clave
+/// `name:` duplicada en el mapping del usuario. De ahí que el cierre
+/// exija columna 0, igual que el parser.
+fn frontmatter_yaml_range(content: &str) -> Option<std::ops::Range<usize>> {
+    let bom = content.len() - content.trim_start_matches('\u{feff}').len();
+    let t = &content[bom..];
     let leading_ws = t.len() - t.trim_start().len();
-    let start = &t[leading_ws..];
-    if let Some(after) = start.strip_prefix("---") {
-        if let Some(end) = after.find("\n---") {
-            let yaml = &after[..end];
-            // `rest` arranca en la línea de cierre `---`.
-            let rest = &after[end + 1..];
-            if let Some(nl) = rest.find('\n') {
-                return (Some(yaml), &rest[nl + 1..]);
-            }
-            return (Some(yaml), "");
+    let start_off = bom + leading_ws;
+
+    // La apertura tiene que ser lo primero del archivo (salvo BOM/espacios).
+    content[start_off..].strip_prefix("---")?;
+    let after_off = start_off + 3;
+
+    // El cierre tiene que ser un `---` a principio de línea.
+    let end = content[after_off..].find("\n---")?;
+    Some(after_off..after_off + end)
+}
+
+fn split_frontmatter_body(content: &str) -> (Option<&str>, &str) {
+    match frontmatter_yaml_range(content) {
+        Some(range) => {
+            // `rest` arranca en la línea de cierre `---`; el body es lo que
+            // sigue a esa línea.
+            let rest = &content[range.end + 1..];
+            let body = match rest.find('\n') {
+                Some(nl) => &rest[nl + 1..],
+                None => "",
+            };
+            (Some(&content[range]), body)
         }
+        None => (None, content),
     }
-    (None, content)
 }
 
 /// Renderiza el contenido completo de un SKILL.md a partir del input y un
@@ -527,11 +569,233 @@ fn backup_existing_skill_md(
     Ok(())
 }
 
-fn upsert_skill_at(
-    input: &SkillInput,
+// ---------------------------------------------------------------------
+// rename
+// ---------------------------------------------------------------------
+
+/// Charset admitido para el nombre NUEVO de una skill. Más estricto que
+/// `valid_skill_name` (que solo evita traversal) por dos razones: el
+/// nombre es a la vez un nombre de carpeta y un valor de YAML, así que
+/// restringirlo a este charset elimina de raíz cualquier necesidad de
+/// quotear/escapar al reescribir el frontmatter. Solo aplica a nombres
+/// nuevos: las skills ya existentes con nombres más raros se siguen
+/// leyendo sin problema.
+fn valid_new_skill_name(name: &str) -> Result<(), WriteError> {
+    let invalid = |message: &str| WriteError::InvalidName {
+        message: message.to_string(),
+    };
+
+    if name.is_empty() {
+        return Err(invalid("el nombre no puede estar vacío"));
+    }
+    if !valid_skill_name(name) {
+        return Err(invalid("no puede contener separadores de ruta ni '..'"));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(invalid(
+            "el nombre solo admite letras y números ASCII, '-', '_' y '.'",
+        ));
+    }
+    Ok(())
+}
+
+/// Reescribe SOLO la línea `name:` top-level del frontmatter, dejando el
+/// resto del SKILL.md byte a byte idéntico.
+///
+/// NO se re-renderiza el frontmatter con `render_skill_md`: ese camino
+/// emite únicamente name/description/version (ver `FrontmatterOut`), así
+/// que borraría cualquier clave que el parser no modela
+/// (`allowed-tools`, `license`, `metadata`…), además de reformatear el
+/// YAML del usuario. Es el mismo principio de merge quirúrgico que se
+/// aplica a los configs de MCPs.
+///
+/// El límite del frontmatter sale de `frontmatter_yaml_range`, la misma
+/// función que usa la lectura: si acá se usara una heurística propia más
+/// laxa, un `---` indentado dentro de un bloque literal podría tomarse
+/// como cierre y terminaríamos duplicando la clave `name:`.
+///
+/// Devuelve `None` si no hay nada que reescribir: sin bloque de
+/// frontmatter, el nombre de la skill sale de la carpeta
+/// (`read_skill_dir`), así que moverla alcanza.
+fn rewrite_frontmatter_name(content: &str, new_name: &str) -> Option<String> {
+    let range = frontmatter_yaml_range(content)?;
+    let yaml = &content[range.clone()];
+
+    let mut new_yaml = String::with_capacity(yaml.len() + new_name.len() + 8);
+    let mut replaced = false;
+
+    for line in yaml.split_inclusive('\n') {
+        // Terminador propio de esta línea: la última del bloque no tiene
+        // (el `\n` de cierre vive fuera del rango del YAML).
+        let (text, term) = match line.strip_suffix('\n') {
+            Some(t) => match t.strip_suffix('\r') {
+                Some(t) => (t, "\r\n"),
+                None => (t, "\n"),
+            },
+            None => (line, ""),
+        };
+
+        // Solo claves top-level: una línea indentada es parte de otro
+        // valor (p. ej. `metadata:` con un `name:` anidado, o el
+        // contenido de un bloque literal) y no se toca.
+        if !replaced && !text.starts_with(char::is_whitespace) && text.starts_with("name:") {
+            new_yaml.push_str("name: ");
+            new_yaml.push_str(new_name);
+            new_yaml.push_str(term);
+            replaced = true;
+        } else {
+            new_yaml.push_str(line);
+        }
+    }
+
+    if !replaced {
+        // Sin clave `name:`: se inserta como primera del bloque, después
+        // del salto que sigue al `---` de apertura.
+        let (lead, rest) = if let Some(r) = yaml.strip_prefix("\r\n") {
+            ("\r\n", r)
+        } else if let Some(r) = yaml.strip_prefix('\n') {
+            ("\n", r)
+        } else {
+            ("\n", yaml)
+        };
+        new_yaml = format!("{lead}name: {new_name}{lead}{rest}");
+    }
+
+    Some(format!(
+        "{}{}{}",
+        &content[..range.start],
+        new_yaml,
+        &content[range.end..]
+    ))
+}
+
+fn rename_skill_at(
+    target: &SkillTarget,
+    new_name: &str,
     user_dir: &Path,
     app_data: &Path,
 ) -> Result<(), WriteError> {
+    valid_new_skill_name(new_name)?;
+
+    if new_name == target.name {
+        return Ok(());
+    }
+
+    let mut disabled = read_disabled(app_data);
+    let disabled_idx = disabled.iter().position(|d| {
+        d.scope == target.scope && d.project_path == target.project_path && d.name == target.name
+    });
+
+    let new_target = SkillTarget {
+        scope: target.scope,
+        project_path: target.project_path.clone(),
+        name: new_name.to_string(),
+    };
+    let new_original = skill_original_dir(&new_target, user_dir)?;
+
+    // Colisión con una skill existente. Para una skill deshabilitada esto
+    // igual importa: sin el chequeo, el rename la dejaría imposible de
+    // habilitar más tarde.
+    if new_original.exists() {
+        return Err(WriteError::Conflict {
+            path: new_original.display().to_string(),
+            message: format!("ya existe una skill llamada '{new_name}' en este scope"),
+        });
+    }
+    if disabled.iter().any(|d| {
+        d.scope == target.scope && d.project_path == target.project_path && d.name == new_name
+    }) {
+        return Err(WriteError::Conflict {
+            path: disabled_manifest_path(app_data).display().to_string(),
+            message: format!("ya existe una skill deshabilitada llamada '{new_name}'"),
+        });
+    }
+
+    // Si está deshabilitada la fuente es el sidecar (y ahí se queda: la
+    // carpeta del sidecar tiene un nombre opaco); si no, la carpeta real.
+    let source = match disabled_idx {
+        Some(i) => PathBuf::from(disabled[i].sidecar_path.clone()),
+        None => skill_original_dir(target, user_dir)?,
+    };
+
+    if !source.exists() {
+        return Err(WriteError::TargetNotFound {
+            message: format!("no se encontró la skill '{}'", target.name),
+        });
+    }
+
+    // No escribir a través de un symlink (mismo criterio que `upsert`).
+    if let Ok(meta) = std::fs::symlink_metadata(&source) {
+        if meta.file_type().is_symlink() {
+            return Err(WriteError::NotSupported {
+                message: format!(
+                    "la carpeta de la skill '{}' es un symlink; resolvelo a mano",
+                    target.name
+                ),
+            });
+        }
+    }
+
+    // ORDEN DELIBERADO: primero el frontmatter, después el paso que
+    // "commitea" el rename (mover la carpeta, o guardar el manifest si la
+    // skill está deshabilitada).
+    //
+    // Para una skill DESHABILITADA el orden cierra la ventana por
+    // completo: el manifest es la identidad autoritativa (ver
+    // `read_skills_at`), así que hasta que se escriba no pasó nada, y
+    // reescribir el frontmatter antes es inocuo.
+    //
+    // Para una HABILITADA la identidad la da el frontmatter, que le gana
+    // al nombre de carpeta: si el proceso muere entre los dos pasos, la
+    // skill ya se ve con el nombre nuevo y queda una carpeta con el
+    // nombre viejo. Queda un residuo visible y arreglable a mano (no hay
+    // orden de dos escrituras que evite eso sin un journal), pero nunca
+    // se pierde contenido: el SKILL.md previo quedó respaldado.
+    let skill_md = source.join("SKILL.md");
+    if let Ok(existing) = std::fs::read_to_string(&skill_md) {
+        if let Some(updated) = rewrite_frontmatter_name(&existing, new_name) {
+            backup_existing_skill_md(&skill_md, app_data, &target.name)?;
+            crate::safe_write::atomic_write(&skill_md, &updated)?;
+        }
+    }
+
+    match disabled_idx {
+        Some(i) => {
+            // Deshabilitada: la carpeta no se mueve, pero el manifest tiene
+            // que apuntar al nuevo nombre y al nuevo destino de restauración.
+            disabled[i].name = new_name.to_string();
+            disabled[i].original_path = new_original.display().to_string();
+            write_disabled(app_data, &disabled)?;
+        }
+        None => {
+            move_dir(&source, &new_original)?;
+        }
+    }
+
+    let _ = changelog::append(changelog::MutationLog::new(
+        crate::domain::AppId::ClaudeCode,
+        target.scope,
+        new_original.join("SKILL.md").display().to_string(),
+        changelog::MutationAction::Rename,
+        format!("{} → {}", target.name, new_name),
+        None,
+    ));
+
+    Ok(())
+}
+
+/// Renombra una skill: mueve su carpeta y reescribe el `name:` de su
+/// frontmatter, que son los dos lugares donde vive su identidad.
+pub fn rename_skill(target: &SkillTarget, new_name: &str) -> Result<(), WriteError> {
+    let user_dir = user_skills_dir()?;
+    let app_data = paths::app_data_dir()?;
+    rename_skill_at(target, new_name, &user_dir, &app_data)
+}
+
+fn upsert_skill_at(input: &SkillInput, user_dir: &Path, app_data: &Path) -> Result<(), WriteError> {
     if input.description.trim().is_empty() {
         return Err(WriteError::NotSupported {
             message: "la skill requiere una descripción no vacía".to_string(),
@@ -611,6 +875,86 @@ pub fn upsert_skill(input: &SkillInput) -> Result<(), WriteError> {
 mod tests {
     use super::*;
 
+    // --- rewrite_frontmatter_name: función pura, casos borde ---
+
+    #[test]
+    fn rewrite_name_replaces_only_the_top_level_key() {
+        let src = "---\nname: old\ndescription: d\nmetadata:\n  name: nested\n---\n\nbody\n";
+        let out = rewrite_frontmatter_name(src, "new").expect("debería reescribir");
+        assert_eq!(
+            out,
+            "---\nname: new\ndescription: d\nmetadata:\n  name: nested\n---\n\nbody\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_name_inserts_when_frontmatter_has_no_name() {
+        let src = "---\ndescription: d\n---\nbody\n";
+        let out = rewrite_frontmatter_name(src, "new").expect("debería reescribir");
+        assert_eq!(out, "---\nname: new\ndescription: d\n---\nbody\n");
+    }
+
+    #[test]
+    fn rewrite_name_without_frontmatter_is_a_noop() {
+        // Sin frontmatter el nombre sale de la carpeta, así que moverla
+        // alcanza: no inventamos un bloque.
+        assert!(rewrite_frontmatter_name("# solo body\n", "new").is_none());
+        assert!(rewrite_frontmatter_name("", "new").is_none());
+    }
+
+    #[test]
+    fn rewrite_name_ignores_dashes_inside_a_literal_block() {
+        // REGRESIÓN: una línea que al trimear da "---" pero está INDENTADA
+        // es contenido de un bloque literal, no el cierre del frontmatter.
+        // Tomarla como cierre insertaba una segunda clave `name:` y dejaba
+        // la real sin renombrar (YAML con claves duplicadas).
+        let src =
+            "---\ndescription: |\n  texto\n  ---\n  más texto\nname: old\nversion: 1\n---\nbody\n";
+        let out = rewrite_frontmatter_name(src, "new").expect("debería reescribir");
+        assert_eq!(
+            out,
+            "---\ndescription: |\n  texto\n  ---\n  más texto\nname: new\nversion: 1\n---\nbody\n"
+        );
+        assert_eq!(out.matches("name:").count(), 1, "no duplicar la clave name");
+        // Y el parser real ve el nombre nuevo.
+        assert_eq!(parse_frontmatter(&out).name.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn rewrite_name_ignores_dashes_inside_a_folded_block() {
+        let src = "---\nname: old\ndescription: >-\n  algo\n  ---\n---\nbody\n";
+        let out = rewrite_frontmatter_name(src, "new").expect("debería reescribir");
+        assert_eq!(
+            out,
+            "---\nname: new\ndescription: >-\n  algo\n  ---\n---\nbody\n"
+        );
+        assert_eq!(parse_frontmatter(&out).name.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn rewrite_name_leaves_body_dashes_alone() {
+        // Un `---` en columna 0 en el BODY ya está fuera del rango del
+        // frontmatter, así que no participa.
+        let src = "---\nname: old\n---\n\ntexto\n\n---\n\nmás\n";
+        let out = rewrite_frontmatter_name(src, "new").expect("debería reescribir");
+        assert_eq!(out, "---\nname: new\n---\n\ntexto\n\n---\n\nmás\n");
+    }
+
+    #[test]
+    fn rewrite_name_requires_a_closing_delimiter() {
+        // Sin cierre no hay frontmatter (mismo criterio que el parser), así
+        // que no se toca nada.
+        assert!(rewrite_frontmatter_name("---\nname: old\nsin cierre\n", "new").is_none());
+    }
+
+    #[test]
+    fn rewrite_name_preserves_crlf() {
+        let src = "---\r\nname: old\r\ndescription: d\r\n---\r\nbody\r\n";
+        let out = rewrite_frontmatter_name(src, "new").expect("debería reescribir");
+        assert!(out.contains("name: new\r\n"));
+        assert!(out.contains("description: d\r\n"));
+    }
+
     fn write_skill(base: &Path, name: &str, frontmatter: &str) {
         let dir = base.join(name);
         std::fs::create_dir_all(&dir).unwrap();
@@ -629,9 +973,8 @@ mod tests {
 
     #[test]
     fn parses_folded_multiline_description() {
-        let fm = parse_frontmatter(
-            "---\nname: bar\ndescription: >-\n  linea uno\n  linea dos\n---\n",
-        );
+        let fm =
+            parse_frontmatter("---\nname: bar\ndescription: >-\n  linea uno\n  linea dos\n---\n");
         assert_eq!(fm.name.as_deref(), Some("bar"));
         assert_eq!(fm.description.as_deref(), Some("linea uno linea dos"));
     }
@@ -658,7 +1001,11 @@ mod tests {
 
         let repo = dir.path().join("repo");
         let project_skills = repo.join(".claude/skills");
-        write_skill(&project_skills, "p1", "---\nname: p1\ndescription: proj skill\n---\n");
+        write_skill(
+            &project_skills,
+            "p1",
+            "---\nname: p1\ndescription: proj skill\n---\n",
+        );
 
         let app = dir.path().join("app");
         std::fs::create_dir_all(&app).unwrap();
@@ -693,7 +1040,11 @@ mod tests {
     fn disable_then_enable_round_trips_folder_intact() {
         let dir = tempfile::tempdir().unwrap();
         let user = dir.path().join("skills");
-        write_skill(&user, "toggle-me", "---\nname: toggle-me\ndescription: x\n---\nBODY");
+        write_skill(
+            &user,
+            "toggle-me",
+            "---\nname: toggle-me\ndescription: x\n---\nBODY",
+        );
         let app = dir.path().join("app");
         std::fs::create_dir_all(&app).unwrap();
 
@@ -744,7 +1095,11 @@ mod tests {
         // Target real del symlink, FUERA del árbol de skills.
         let external = dir.path().join("agents/linked/SKILL.md");
         std::fs::create_dir_all(external.parent().unwrap()).unwrap();
-        std::fs::write(&external, "---\nname: linked\ndescription: real\n---\nDO-NOT-DELETE").unwrap();
+        std::fs::write(
+            &external,
+            "---\nname: linked\ndescription: real\n---\nDO-NOT-DELETE",
+        )
+        .unwrap();
         // Skill con SKILL.md symlinkeado al target externo.
         let skill_dir = user.join("linked");
         std::fs::create_dir_all(&skill_dir).unwrap();
@@ -785,7 +1140,11 @@ mod tests {
 
         set_skill_enabled_at(&target, false, &user, &app).unwrap();
         // El usuario recrea a mano una carpeta con el mismo nombre.
-        write_skill(&user, "coll", "---\nname: coll\ndescription: nuevo\n---\nNEW");
+        write_skill(
+            &user,
+            "coll",
+            "---\nname: coll\ndescription: nuevo\n---\nNEW",
+        );
 
         // Habilitar debe fallar limpio (sin pisar lo nuevo), y la deshabilitada
         // sigue listada (recuperable).
@@ -801,7 +1160,11 @@ mod tests {
     fn delete_moves_to_recoverable_trash_not_destroyed() {
         let dir = tempfile::tempdir().unwrap();
         let user = dir.path().join("skills");
-        write_skill(&user, "kill-me", "---\nname: kill-me\ndescription: x\n---\nKEEP");
+        write_skill(
+            &user,
+            "kill-me",
+            "---\nname: kill-me\ndescription: x\n---\nKEEP",
+        );
         let app = dir.path().join("app");
         std::fs::create_dir_all(&app).unwrap();
 
@@ -840,8 +1203,12 @@ mod tests {
         let app = dir.path().join("app");
         std::fs::create_dir_all(&app).unwrap();
 
-        upsert_skill_at(&input("nueva", "hace algo útil", "# Título\ncontenido"), &user, &app)
-            .unwrap();
+        upsert_skill_at(
+            &input("nueva", "hace algo útil", "# Título\ncontenido"),
+            &user,
+            &app,
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(user.join("nueva").join("SKILL.md")).unwrap();
         let fm = parse_frontmatter(&content);
@@ -907,7 +1274,10 @@ mod tests {
         let content = std::fs::read_to_string(user.join("edit-me").join("SKILL.md")).unwrap();
         let fm = parse_frontmatter(&content);
         assert_eq!(fm.description.as_deref(), Some("v2 desc"));
-        assert!(content.contains("CUERPO ORIGINAL"), "el body debía preservarse");
+        assert!(
+            content.contains("CUERPO ORIGINAL"),
+            "el body debía preservarse"
+        );
     }
 
     #[test]
@@ -921,11 +1291,15 @@ mod tests {
         upsert_skill_at(&input("bkp", "desc", "SEGUNDA"), &user, &app).unwrap();
 
         let backups = app.join("backups").join("skills");
-        let has_backup = std::fs::read_dir(&backups)
-            .unwrap()
-            .flatten()
-            .any(|e| std::fs::read_to_string(e.path()).map(|c| c.contains("PRIMERA")).unwrap_or(false));
-        assert!(has_backup, "debía existir un backup con el contenido previo");
+        let has_backup = std::fs::read_dir(&backups).unwrap().flatten().any(|e| {
+            std::fs::read_to_string(e.path())
+                .map(|c| c.contains("PRIMERA"))
+                .unwrap_or(false)
+        });
+        assert!(
+            has_backup,
+            "debía existir un backup con el contenido previo"
+        );
     }
 
     #[test]

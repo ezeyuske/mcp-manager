@@ -28,6 +28,9 @@ edition = "2021"
 name = "mcp_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

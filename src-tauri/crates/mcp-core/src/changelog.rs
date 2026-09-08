@@ -11,6 +11,7 @@ pub enum MutationAction {
     Edit,
     Delete,
     Duplicate,
+    Rename,
     Enable,
     Disable,
     Copy,
@@ -162,6 +163,9 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].mcp_name, "hibob");
         assert_eq!(entries[1].mcp_name, "context7");
-        assert_eq!(entries[1].backup_path.as_deref(), Some("/tmp/backup-1.json"));
+        assert_eq!(
+            entries[1].backup_path.as_deref(),
+            Some("/tmp/backup-1.json")
+        );
     }
 }

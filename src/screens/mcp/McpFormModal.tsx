@@ -222,7 +222,11 @@ export function McpFormModal({ open: isOpen, onClose, initial }: McpFormModalPro
           placeholder="context7"
           mono
           onChange={(e) => setName(e.currentTarget.value)}
-          help={editing ? "El nombre identifica la entrada y no se cambia acá." : undefined}
+          help={
+            editing
+              ? "El nombre se cambia con la acción Renombrar de la lista."
+              : undefined
+          }
         />
 
         <div className="flex flex-col gap-1.5">

@@ -74,11 +74,10 @@ pub fn atomic_write(path: &Path, contents: &str) -> Result<(), WriteError> {
         source,
     })?;
 
-    tmp.persist(path)
-        .map_err(|persist_err| WriteError::Io {
-            path: path.display().to_string(),
-            source: persist_err.error,
-        })?;
+    tmp.persist(path).map_err(|persist_err| WriteError::Io {
+        path: path.display().to_string(),
+        source: persist_err.error,
+    })?;
 
     Ok(())
 }

@@ -6,7 +6,9 @@
 
 use crate::adapters::{all_adapters, build_installation};
 use crate::builtin::BUILTIN_NAME;
-use crate::domain::{AppId, AppInfo, Inventory, McpInstallation, McpServerConfig, McpStatus, Scope};
+use crate::domain::{
+    AppId, AppInfo, Inventory, McpInstallation, McpServerConfig, McpStatus, Scope,
+};
 use crate::mutations::{self, McpTarget};
 use crate::{disabled, projects, vault};
 
@@ -135,5 +137,8 @@ pub fn build() -> Inventory {
         }
     }
 
-    Inventory { apps, installations }
+    Inventory {
+        apps,
+        installations,
+    }
 }

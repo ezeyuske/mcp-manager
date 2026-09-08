@@ -55,6 +55,7 @@ interface SkillsState {
   load: () => Promise<void>;
   setEnabled: (target: SkillTarget, enabled: boolean) => Promise<boolean>;
   remove: (target: SkillTarget) => Promise<boolean>;
+  rename: (target: SkillTarget, newName: string) => Promise<boolean>;
   upsert: (input: SkillInput) => Promise<boolean>;
 }
 
@@ -91,6 +92,14 @@ export const useSkills = create<SkillsState>((set) => ({
     runSkill(set, `Skill "${target.name}" eliminada.`, "delete_skill", {
       target,
     }),
+
+  rename: (target, newName) =>
+    runSkill(
+      set,
+      `Skill "${target.name}" renombrada a "${newName}".`,
+      "rename_skill",
+      { target, newName },
+    ),
 
   upsert: (input) =>
     runSkill(set, `Skill "${input.name}" guardada.`, "upsert_skill", {

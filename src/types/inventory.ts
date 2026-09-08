@@ -65,6 +65,30 @@ export function targetOf(inst: McpInstallation): McpTarget {
   };
 }
 
+/**
+ * Resultado de `rename_mcp` (espejo de `RenameReport` en Rust).
+ *
+ * Un rename cruza varios archivos y por lo tanto no puede ser atómico: el
+ * backend valida todos los targets antes de escribir el primero, pero un
+ * error de IO en pleno vuelo puede dejar un resultado parcial. Por eso el
+ * command devuelve qué se renombró y qué no, en vez de un booleano que
+ * mentiría.
+ */
+export interface RenameReport {
+  renamed: McpTarget[];
+  failed: RenameFailure[];
+}
+
+export interface RenameFailure {
+  /** El target con el nombre VIEJO, para identificar la fila que falló.
+   *  Si `applied` es true, ese nombre ya no existe en disco. */
+  target: McpTarget;
+  /** true si el rename se aplicó y solo falló reapuntar los secretos del
+   *  vault. Evita tener que interpretar el texto de `error`. */
+  applied: boolean;
+  error: string;
+}
+
 /** Payload de `config` para upsert_mcp (espejo de McpServerConfig en Rust). */
 export interface McpServerConfigInput {
   type?: string;
@@ -79,6 +103,7 @@ export type MutationAction =
   | "edit"
   | "delete"
   | "duplicate"
+  | "rename"
   | "enable"
   | "disable"
   | "copy"

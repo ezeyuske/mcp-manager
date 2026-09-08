@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::changelog::{self, MutationAction, MutationLog};
-use crate::domain::{AppId, ClaudeCodeFile, ClaudeDesktopFile, McpJsonFile, McpServerConfig, Scope};
+use crate::domain::{
+    AppId, ClaudeCodeFile, ClaudeDesktopFile, McpJsonFile, McpServerConfig, Scope,
+};
 use crate::error::WriteError;
 use crate::safe_write;
 
@@ -59,11 +61,13 @@ impl TargetFile {
 fn resolve_target_file(target: &McpTarget) -> Result<TargetFile, WriteError> {
     match target.scope {
         Scope::Project => {
-            let project_path = target.project_path.as_ref().ok_or_else(|| {
-                WriteError::TargetNotFound {
-                    message: "scope Project requiere projectPath".to_string(),
-                }
-            })?;
+            let project_path =
+                target
+                    .project_path
+                    .as_ref()
+                    .ok_or_else(|| WriteError::TargetNotFound {
+                        message: "scope Project requiere projectPath".to_string(),
+                    })?;
             Ok(TargetFile::McpJson(
                 PathBuf::from(project_path).join(".mcp.json"),
             ))
@@ -368,21 +372,166 @@ pub fn delete(target: &McpTarget) -> Result<Option<PathBuf>, WriteError> {
     Ok(backup_path)
 }
 
+/// Valida un nombre de MCP antes de usarlo como clave de `mcpServers`.
+/// Espejo de `skills::valid_skill_name`: el nombre viaja a configs de
+/// otras apps y (en el caso de skills) a nombres de carpeta, así que se
+/// rechaza cualquier cosa que pueda romper el JSON, confundir al lector o
+/// escapar de un directorio.
+pub fn valid_mcp_name(name: &str) -> Result<(), WriteError> {
+    let invalid = |message: &str| WriteError::InvalidName {
+        message: message.to_string(),
+    };
+
+    if name.is_empty() {
+        return Err(invalid("el nombre no puede estar vacío"));
+    }
+
+    if name != name.trim() {
+        return Err(invalid(
+            "el nombre no puede empezar ni terminar con espacios",
+        ));
+    }
+
+    if name.chars().any(|c| c.is_whitespace()) {
+        return Err(invalid("el nombre no puede contener espacios"));
+    }
+
+    if name.chars().any(char::is_control) {
+        return Err(invalid("el nombre no puede contener caracteres de control"));
+    }
+
+    if name.contains('/') || name.contains('\\') {
+        return Err(invalid("el nombre no puede contener '/' ni '\\'"));
+    }
+
+    if name == "." || name == ".." {
+        return Err(invalid("nombre reservado"));
+    }
+
+    Ok(())
+}
+
+/// ¿Existe ya una entrada llamada `name` en el archivo al que apunta
+/// `target`? A diferencia de `rename_preflight`, no exige que
+/// `target.name` exista: se usa para chequear disponibilidad del nombre
+/// destino cuando el origen vive en el sidecar de deshabilitados y no en
+/// el config real.
+pub fn name_exists(target: &McpTarget, name: &str) -> Result<bool, WriteError> {
+    let file = resolve_target_file(target)?;
+    let (_, mcp_servers) = load_mcp_servers(&file)?;
+    Ok(mcp_servers.contains_key(name))
+}
+
+/// Chequea, SIN escribir nada, que renombrar `target.name` a `new_name`
+/// sea posible en el archivo destino: que el origen exista y que el
+/// nombre nuevo no esté tomado.
+///
+/// Existe separado de `rename` para que el orquestador pueda validar
+/// TODOS los targets de un rename multi-archivo antes de tocar el
+/// primero: así el modo de falla común (nombre ya usado) aborta la
+/// operación completa con cero escrituras, en vez de dejar la mitad de
+/// los configs renombrados.
+pub fn rename_preflight(target: &McpTarget, new_name: &str) -> Result<(), WriteError> {
+    valid_mcp_name(new_name)?;
+    let file = resolve_target_file(target)?;
+    let (_, mcp_servers) = load_mcp_servers(&file)?;
+    check_rename(&file, &mcp_servers, &target.name, new_name)
+}
+
+/// Reglas compartidas por `rename_preflight` y `rename`, para que el
+/// chequeo previo y la escritura no puedan divergir.
+fn check_rename(
+    file: &TargetFile,
+    mcp_servers: &Map<String, Value>,
+    old_name: &str,
+    new_name: &str,
+) -> Result<(), WriteError> {
+    if !mcp_servers.contains_key(old_name) {
+        return Err(WriteError::TargetNotFound {
+            message: format!(
+                "no se encontró la entrada '{}' en {}",
+                old_name,
+                file.path().display()
+            ),
+        });
+    }
+
+    if new_name != old_name && mcp_servers.contains_key(new_name) {
+        return Err(WriteError::Conflict {
+            path: file.path().display().to_string(),
+            message: format!("ya existe un MCP llamado '{new_name}'"),
+        });
+    }
+
+    Ok(())
+}
+
+/// Re-keyea la entrada `target.name` a `new_name` en el mismo archivo.
+///
+/// NOTA DE PRESERVACIÓN: se mueve el `Value` crudo tal cual, sin pasar
+/// por `merge_entry` ni por `serde_json::to_value(McpServerConfig)`. Eso
+/// es deliberado: un rename no cambia la configuración, solo su clave, y
+/// mover el `Value` garantiza por construcción que se preserven tanto
+/// los campos que el frontend no modela como los valores de `env` (que
+/// el frontend nunca recibe). Tampoco se llama `apply_vault_bindings`:
+/// los valores del vault ya están dentro del `Value` que se mueve, así
+/// que reinyectarlos sería un round-trip al keychain sin efecto.
+///
+/// Los bindings del vault, que se indexan por el `McpTarget` completo, NO
+/// se actualizan acá: eso es responsabilidad de `crate::rename`, que
+/// corre `vault::retarget_bindings` después de esta escritura.
+pub fn rename(target: &McpTarget, new_name: &str) -> Result<Option<PathBuf>, WriteError> {
+    let file = resolve_target_file(target)?;
+    rename_in(&file, target, new_name)
+}
+
+fn rename_in(
+    file: &TargetFile,
+    target: &McpTarget,
+    new_name: &str,
+) -> Result<Option<PathBuf>, WriteError> {
+    valid_mcp_name(new_name)?;
+
+    let (root, mut mcp_servers) = load_mcp_servers(file)?;
+    check_rename(file, &mcp_servers, &target.name, new_name)?;
+
+    let existing = mcp_servers
+        .remove(&target.name)
+        .expect("check_rename garantizó que la entrada existe");
+    mcp_servers.insert(new_name.to_string(), existing);
+
+    let backup_path = save_mcp_servers(file, root, mcp_servers)?;
+
+    // Se loguea con "viejo → nuevo" para que Actividad muestre el cambio
+    // completo: `MutationLog` solo tiene un campo de nombre.
+    let mut renamed_target = target.clone();
+    renamed_target.name = format!("{} → {}", target.name, new_name);
+    log_mutation(
+        &renamed_target,
+        file,
+        MutationAction::Rename,
+        backup_path.clone(),
+    );
+
+    Ok(backup_path)
+}
+
 /// Copia el `Value` de `target.name` bajo `new_name`, en el mismo archivo.
 pub fn duplicate(target: &McpTarget, new_name: &str) -> Result<Option<PathBuf>, WriteError> {
     let file = resolve_target_file(target)?;
     let (root, mut mcp_servers) = load_mcp_servers(&file)?;
 
-    let existing = mcp_servers
-        .get(&target.name)
-        .cloned()
-        .ok_or_else(|| WriteError::TargetNotFound {
-            message: format!(
-                "no se encontró la entrada '{}' en {}",
-                target.name,
-                file.path().display()
-            ),
-        })?;
+    let existing =
+        mcp_servers
+            .get(&target.name)
+            .cloned()
+            .ok_or_else(|| WriteError::TargetNotFound {
+                message: format!(
+                    "no se encontró la entrada '{}' en {}",
+                    target.name,
+                    file.path().display()
+                ),
+            })?;
 
     mcp_servers.insert(new_name.to_string(), existing);
 
@@ -421,9 +570,8 @@ fn adapt_entry_for(dest_app: AppId, entry: &Value) -> Result<Value, WriteError> 
             match transport_type.as_deref() {
                 Some("http") | Some("sse") => {
                     return Err(WriteError::NotSupported {
-                        message:
-                            "Claude Desktop solo soporta MCPs stdio; el origen es http/sse"
-                                .to_string(),
+                        message: "Claude Desktop solo soporta MCPs stdio; el origen es http/sse"
+                            .to_string(),
                     });
                 }
                 _ => {}
@@ -483,7 +631,12 @@ pub fn copy(
     dest_servers.insert(dest_target.name.clone(), adapted_value);
 
     let backup_path = save_mcp_servers(&dest_file, dest_root, dest_servers)?;
-    log_mutation(&dest_target, &dest_file, MutationAction::Copy, backup_path.clone());
+    log_mutation(
+        &dest_target,
+        &dest_file,
+        MutationAction::Copy,
+        backup_path.clone(),
+    );
 
     Ok(backup_path)
 }
@@ -583,16 +736,17 @@ fn set_mcp_env_into(
     let (root, mut mcp_servers) = load_mcp_servers(file)?;
 
     // Editamos un MCP existente: la entrada TIENE que existir.
-    let mut entry = mcp_servers
-        .get(&target.name)
-        .cloned()
-        .ok_or_else(|| WriteError::TargetNotFound {
-            message: format!(
-                "no se encontró la entrada '{}' en {}",
-                target.name,
-                file.path().display()
-            ),
-        })?;
+    let mut entry =
+        mcp_servers
+            .get(&target.name)
+            .cloned()
+            .ok_or_else(|| WriteError::TargetNotFound {
+                message: format!(
+                    "no se encontró la entrada '{}' en {}",
+                    target.name,
+                    file.path().display()
+                ),
+            })?;
 
     // Claves gobernadas por el vault: intocables por este path inline.
     let vault_keys: std::collections::HashSet<String> = crate::vault::bindings_for_target(target)
@@ -696,16 +850,16 @@ mod tests {
             "args": ["run", "mcp-obsidian"]
         }))
         .unwrap();
-        mcp_servers.insert("mcp-obsidian".to_string(), serde_json::to_value(&cfg).unwrap());
+        mcp_servers.insert(
+            "mcp-obsidian".to_string(),
+            serde_json::to_value(&cfg).unwrap(),
+        );
 
         save_mcp_servers(&file, root, mcp_servers).expect("save");
 
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            written["coworkUserFilesPath"],
-            "/Users/ezequiel/Claude"
-        );
+        assert_eq!(written["coworkUserFilesPath"], "/Users/ezequiel/Claude");
         assert_eq!(written["preferences"]["sidebarMode"], "chat");
         assert!(written["mcpServers"]["context7"].is_object());
         assert!(written["mcpServers"]["mcp-obsidian"].is_object());
@@ -866,12 +1020,7 @@ mod tests {
 
         let original_raw = std::fs::read_to_string(&path).unwrap();
         let original: Value = serde_json::from_str(&original_raw).unwrap();
-        let original_keys: Vec<String> = original
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect();
+        let original_keys: Vec<String> = original.as_object().unwrap().keys().cloned().collect();
 
         let t = McpTarget {
             app: AppId::ClaudeCode,
@@ -972,8 +1121,7 @@ mod tests {
 
         let t = target("solo");
         let file = TargetFile::ClaudeDesktop(path.clone());
-        set_mcp_env_into(&file, &t, Map::new(), vec!["ONLY_KEY".to_string()])
-            .expect("set_mcp_env");
+        set_mcp_env_into(&file, &t, Map::new(), vec!["ONLY_KEY".to_string()]).expect("set_mcp_env");
 
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();

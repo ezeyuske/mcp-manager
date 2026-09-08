@@ -9,6 +9,7 @@ import {
   PlugZap,
   Pencil,
   CopyPlus,
+  TextCursorInput,
   ArrowLeftRight,
   Trash2,
   Lock,
@@ -43,6 +44,9 @@ type Dialog =
   | { kind: "edit"; inst: McpInstallation }
   | { kind: "delete"; inst: McpInstallation }
   | { kind: "duplicate"; inst: McpInstallation }
+  // El rename alcanza a TODAS las installations del MCP, así que el
+  // diálogo necesita el unificado además de la fila clickeada.
+  | { kind: "rename"; mcp: UnifiedMcp; inst: McpInstallation }
   | null;
 
 export function McpsScreen() {
@@ -187,6 +191,7 @@ export function McpsScreen() {
                 onEdit={(inst) => setDialog({ kind: "edit", inst })}
                 onDelete={(inst) => setDialog({ kind: "delete", inst })}
                 onDuplicate={(inst) => setDialog({ kind: "duplicate", inst })}
+                onRename={(inst) => setDialog({ kind: "rename", mcp, inst })}
               />
             ))}
           </div>
@@ -219,6 +224,14 @@ export function McpsScreen() {
       )}
       {dialog?.kind === "duplicate" && (
         <DuplicateDialog inst={dialog.inst} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === "rename" && (
+        <RenameDialog
+          mcp={dialog.mcp}
+          inst={dialog.inst}
+          takenNames={unified.map((m) => m.name)}
+          onClose={() => setDialog(null)}
+        />
       )}
     </ScreenShell>
   );
@@ -361,11 +374,13 @@ function McpCard({
   onEdit,
   onDelete,
   onDuplicate,
+  onRename,
 }: {
   mcp: UnifiedMcp;
   onEdit: (i: McpInstallation) => void;
   onDelete: (i: McpInstallation) => void;
   onDuplicate: (i: McpInstallation) => void;
+  onRename: (i: McpInstallation) => void;
 }) {
   const Icon = TRANSPORT_ICON[mcp.transport];
   return (
@@ -399,6 +414,7 @@ function McpCard({
             onEdit={onEdit}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
+            onRename={onRename}
           />
         ))}
       </div>
@@ -411,11 +427,13 @@ function InstallationRow({
   onEdit,
   onDelete,
   onDuplicate,
+  onRename,
 }: {
   inst: McpInstallation;
   onEdit: (i: McpInstallation) => void;
   onDelete: (i: McpInstallation) => void;
   onDuplicate: (i: McpInstallation) => void;
+  onRename: (i: McpInstallation) => void;
 }) {
   const setEnabled = useMutations((s) => s.setEnabled);
   const copy = useMutations((s) => s.copy);
@@ -466,6 +484,12 @@ function InstallationRow({
       />
       <RowAction label="Editar" onClick={() => onEdit(inst)}>
         <Pencil size={15} />
+      </RowAction>
+      <RowAction
+        label="Renombrar (en todas sus instalaciones)"
+        onClick={() => onRename(inst)}
+      >
+        <TextCursorInput size={15} />
       </RowAction>
       <RowAction label="Duplicar" onClick={() => onDuplicate(inst)}>
         <CopyPlus size={15} />
@@ -565,6 +589,141 @@ function DuplicateDialog({
         mono
         onChange={(e) => setNewName(e.currentTarget.value)}
       />
+    </Modal>
+  );
+}
+
+/**
+ * Renombra un MCP en TODAS sus instalaciones.
+ *
+ * La acción se dispara desde una fila (una instalación), pero el alcance
+ * es el MCP unificado, así que el diálogo enumera explícitamente los
+ * targets que va a tocar y destaca el de la fila clickeada. Sin esa
+ * lista, el botón mentiría sobre su alcance.
+ */
+function RenameDialog({
+  mcp,
+  inst,
+  takenNames,
+  onClose,
+}: {
+  mcp: UnifiedMcp;
+  inst: McpInstallation;
+  takenNames: string[];
+  onClose: () => void;
+}) {
+  const rename = useMutations((s) => s.rename);
+  const busy = useMutations((s) => s.busy);
+  const [newName, setNewName] = useState(mcp.name);
+
+  const trimmed = newName.trim();
+  const hasVault = mcp.installations.some((i) => i.vaultKeys.length > 0);
+
+  // El backend revalida todo esto; acá es para dar el error antes de
+  // escribir y sin un round-trip.
+  const problem =
+    trimmed === ""
+      ? "El nombre no puede estar vacío."
+      : /\s/.test(trimmed)
+        ? "El nombre no puede contener espacios."
+        : /[/\\]/.test(trimmed)
+          ? "El nombre no puede contener '/' ni '\\'."
+          : trimmed !== mcp.name && takenNames.includes(trimmed)
+            ? `Ya existe un MCP llamado "${trimmed}".`
+            : null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Renombrar ${mcp.name}`}
+      subtitle={
+        mcp.installations.length === 1
+          ? "1 instalación"
+          : `${mcp.installations.length} instalaciones`
+      }
+      width={480}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={busy || problem !== null || trimmed === mcp.name}
+            onClick={async () => {
+              const ok = await rename(
+                mcp.installations.map(targetOf),
+                trimmed,
+              );
+              if (ok) onClose();
+            }}
+          >
+            Renombrar
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Input
+            label="Nuevo nombre"
+            value={newName}
+            mono
+            autoFocus
+            onChange={(e) => setNewName(e.currentTarget.value)}
+          />
+          {/* El error va en su propia línea con el token de peligro: el
+              `help` del Input es texto tenue y un error ahí se pierde. */}
+          {problem !== null && (
+            <span
+              className="text-[11.5px]"
+              style={{ color: "var(--state-danger-text)" }}
+            >
+              {problem}
+            </span>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1.5 text-[12px] font-medium text-muted">
+            Se renombra en
+          </div>
+          <div className="flex flex-col gap-1">
+            {mcp.installations.map((i) => {
+              const isClicked =
+                i.app === inst.app &&
+                i.scope === inst.scope &&
+                (i.projectPath ?? "") === (inst.projectPath ?? "");
+              return (
+                <div
+                  key={`${i.app}:${i.scope}:${i.projectPath ?? ""}`}
+                  className="flex items-center gap-2 text-[12.5px]"
+                  style={{
+                    color: isClicked ? "var(--accent-strong)" : "var(--color-muted)",
+                  }}
+                >
+                  <Check size={12} />
+                  <span>{APP_LABEL[i.app]}</span>
+                  <Tag>{i.scope}</Tag>
+                  {!i.enabled && <Tag>deshabilitado</Tag>}
+                  {i.projectPath && (
+                    <span className="truncate font-mono text-[11px] text-faint">
+                      {i.projectPath}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <p className="text-[12.5px] leading-relaxed text-muted">
+          Se hace un backup de cada archivo antes de escribir; podés
+          restaurarlo desde Actividad.
+          {hasVault &&
+            " Los secretos vinculados se reapuntan solos al nombre nuevo."}
+        </p>
+      </div>
     </Modal>
   );
 }

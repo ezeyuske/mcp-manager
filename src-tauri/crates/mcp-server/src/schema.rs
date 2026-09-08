@@ -141,6 +141,15 @@ pub struct DuplicateArgs {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct RenameArgs {
+    #[serde(flatten)]
+    pub target: TargetArgs,
+    /// Nombre nuevo. Sin espacios, sin `/` ni `\\`.
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct CopyArgs {
     /// Entrada origen.
     pub source: TargetArgs,
@@ -171,6 +180,16 @@ impl From<SkillTargetArgs> for SkillTarget {
             name: t.name,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameSkillArgs {
+    #[serde(flatten)]
+    pub target: SkillTargetArgs,
+    /// Nombre nuevo (carpeta y `name:` del frontmatter). Solo letras y
+    /// números ASCII, `-`, `_` y `.`.
+    pub new_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

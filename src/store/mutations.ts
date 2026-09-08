@@ -3,10 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../lib/tauri";
 import { useInventory } from "./inventory";
 import { useToast } from "./toast";
+import { APP_LABEL } from "../types/inventory";
 import type {
   AppId,
   McpServerConfigInput,
   McpTarget,
+  RenameReport,
   Scope,
 } from "../types/inventory";
 
@@ -15,6 +17,10 @@ interface MutationState {
   upsert: (target: McpTarget, config: McpServerConfigInput) => Promise<boolean>;
   remove: (target: McpTarget) => Promise<boolean>;
   duplicate: (target: McpTarget, newName: string) => Promise<boolean>;
+  /** Renombra un MCP en TODAS las installations recibidas. Devuelve true
+   *  solo si se renombraron todas: un parcial reporta por toast qué
+   *  targets quedaron sin renombrar y deja el modal abierto. */
+  rename: (targets: McpTarget[], newName: string) => Promise<boolean>;
   setEnabled: (target: McpTarget, enabled: boolean) => Promise<boolean>;
   copy: (
     source: McpTarget,
@@ -90,6 +96,55 @@ export const useMutations = create<MutationState>((set) => ({
       "copy_mcp",
       { source, destApp, destScope, destProjectPath },
     ),
+
+  /** No usa `run`: ese helper asume éxito binario y un único toast, y un
+   *  rename multi-archivo puede terminar parcial. */
+  rename: async (targets, newName) => {
+    const toast = useToast.getState();
+
+    if (!isTauri()) {
+      toast.push("info", "No disponible en modo browser (sin backend).");
+      return false;
+    }
+
+    const oldName = targets[0]?.name ?? "";
+    set({ busy: true });
+    try {
+      const report = await invoke<RenameReport>("rename_mcp", {
+        targets,
+        newName,
+      });
+      await useInventory.getState().load();
+
+      if (report.failed.length === 0) {
+        toast.push(
+          "success",
+          `"${oldName}" renombrado a "${newName}" en ${report.renamed.length} ` +
+            `${report.renamed.length === 1 ? "instalación" : "instalaciones"}.`,
+        );
+        return true;
+      }
+
+      // Parcial: decir exactamente qué quedó afuera, no un "listo".
+      const detail = report.failed
+        .map((f) => `${APP_LABEL[f.target.app]} (${f.target.scope}): ${f.error}`)
+        .join(" · ");
+      toast.push(
+        "error",
+        report.renamed.length > 0
+          ? `Renombrado en ${report.renamed.length} de ${
+              report.renamed.length + report.failed.length
+            } instalaciones. Falló: ${detail}`
+          : `No se pudo renombrar: ${detail}`,
+      );
+      return false;
+    } catch (err) {
+      toast.push("error", String(err));
+      return false;
+    } finally {
+      set({ busy: false });
+    }
+  },
 
   registerProject: async (path) => {
     if (!isTauri()) return;

@@ -24,8 +24,8 @@ use mcp_core::builtin::BUILTIN_NAME;
 use mcp_core::domain::Scope;
 
 use schema::{
-    CopyArgs, DuplicateArgs, ProjectArgs, SetEnabledArgs, SetSkillEnabledArgs, UpsertMcpArgs,
-    UpsertSkillArgs,
+    CopyArgs, DuplicateArgs, ProjectArgs, RenameArgs, RenameSkillArgs, SetEnabledArgs,
+    SetSkillEnabledArgs, UpsertMcpArgs, UpsertSkillArgs,
 };
 
 #[derive(Clone)]
@@ -137,7 +137,11 @@ impl McpManagerServer {
             Ok(_) => ok_msg(format!(
                 "MCP '{}' {}.",
                 target.name,
-                if args.enabled { "habilitado" } else { "deshabilitado" }
+                if args.enabled {
+                    "habilitado"
+                } else {
+                    "deshabilitado"
+                }
             )),
             Err(e) => err_msg(e.to_string()),
         }
@@ -151,8 +155,32 @@ impl McpManagerServer {
         let new_name = args.new_name.clone();
         let target: mcp_core::mutations::McpTarget = args.target.into();
         match mcp_core::mutations::duplicate(&target, &new_name) {
-            Ok(_) => ok_msg(format!("MCP '{}' duplicado como '{}'.", target.name, new_name)),
+            Ok(_) => ok_msg(format!(
+                "MCP '{}' duplicado como '{}'.",
+                target.name, new_name
+            )),
             Err(e) => err_msg(e.to_string()),
+        }
+    }
+
+    #[tool(
+        name = "rename_mcp",
+        description = "Renombra un MCP en el cliente/scope indicado. El nombre es la identidad de la entrada, así que además de re-keyear el config (o el sidecar, si está deshabilitado) reapunta sus secretos vinculados del vault. Falla sin escribir si el nombre ya está tomado."
+    )]
+    async fn rename_mcp(&self, Parameters(args): Parameters<RenameArgs>) -> CallToolResult {
+        let new_name = args.new_name.clone();
+        let target: mcp_core::mutations::McpTarget = args.target.into();
+        if is_builtin(target.scope, &target.name) {
+            return err_msg(format!(
+                "'{BUILTIN_NAME}' es la entrada interna de la app y no se puede renombrar"
+            ));
+        }
+        match mcp_core::rename::rename_one(&target, &new_name) {
+            Ok(_) => ok_msg(format!(
+                "MCP '{}' renombrado a '{}'.",
+                target.name, new_name
+            )),
+            Err(e) => err_msg(e.message(&new_name)),
         }
     }
 
@@ -186,7 +214,27 @@ impl McpManagerServer {
             Ok(_) => ok_msg(format!(
                 "skill '{}' {}.",
                 target.name,
-                if args.enabled { "habilitada" } else { "deshabilitada" }
+                if args.enabled {
+                    "habilitada"
+                } else {
+                    "deshabilitada"
+                }
+            )),
+            Err(e) => err_msg(e.to_string()),
+        }
+    }
+
+    #[tool(
+        name = "rename_skill",
+        description = "Renombra una skill: mueve su carpeta y reescribe SOLO la línea `name:` de su frontmatter, preservando el resto del SKILL.md byte a byte. Falla si ya existe una skill con ese nombre en el scope."
+    )]
+    async fn rename_skill(&self, Parameters(args): Parameters<RenameSkillArgs>) -> CallToolResult {
+        let new_name = args.new_name.clone();
+        let target: mcp_core::skills::SkillTarget = args.target.into();
+        match mcp_core::skills::rename_skill(&target, &new_name) {
+            Ok(_) => ok_msg(format!(
+                "skill '{}' renombrada a '{}'.",
+                target.name, new_name
             )),
             Err(e) => err_msg(e.to_string()),
         }

@@ -309,7 +309,11 @@ fn list_secrets_at(vault_path: &Path) -> Result<Vec<VaultSecretInfo>, WriteError
         .iter()
         .map(|name| VaultSecretInfo {
             name: name.clone(),
-            used_by: file.bindings.iter().filter(|b| &b.secret_name == name).count(),
+            used_by: file
+                .bindings
+                .iter()
+                .filter(|b| &b.secret_name == name)
+                .count(),
         })
         .collect())
 }
@@ -381,6 +385,48 @@ fn bindings_for_target_at(
         .filter(|b| b.target == *target)
         .map(|b| (b.env_key, b.secret_name))
         .collect())
+}
+
+/// Reapunta a `new` todos los bindings cuyo target sea exactamente `old`,
+/// y devuelve cuántos se movieron. Usado por el rename de MCPs: los
+/// bindings se indexan por el `McpTarget` COMPLETO (comparación
+/// estructural, ver `bindings_for_target_at`), así que cambiar el nombre
+/// de un MCP sin esto huerfanizaría sus bindings en silencio — el MCP
+/// perdería el candado en la UI y el próximo upsert dejaría de reinyectar
+/// el secreto.
+///
+/// Solo toca metadata: NO lee ni escribe el keychain, y no modifica la
+/// lista de `secrets`. Las claves del keychain no incluyen el nombre del
+/// MCP (`Entry::new(service(), secret_name)`), así que los secretos en sí
+/// son indiferentes al rename.
+pub fn retarget_bindings(old: &McpTarget, new: &McpTarget) -> Result<usize, WriteError> {
+    retarget_bindings_at(&vault_file()?, old, new)
+}
+
+fn retarget_bindings_at(
+    vault_path: &Path,
+    old: &McpTarget,
+    new: &McpTarget,
+) -> Result<usize, WriteError> {
+    let mut file = read_all_at(vault_path)?;
+
+    let mut moved = 0usize;
+    for binding in file.bindings.iter_mut() {
+        if binding.target == *old {
+            binding.target = new.clone();
+            moved += 1;
+        }
+    }
+
+    if moved == 0 {
+        // Caso normal (la mayoría de los MCPs no usan el vault): no
+        // reescribimos el archivo para no crearlo si no existía.
+        return Ok(0);
+    }
+
+    write_all_at(vault_path, &file)?;
+
+    Ok(moved)
 }
 
 #[cfg(test)]
@@ -485,7 +531,10 @@ mod tests {
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
 
-        assert_eq!(written["mcpServers"]["bound"]["env"]["TOKEN"], "value-for-bound-only");
+        assert_eq!(
+            written["mcpServers"]["bound"]["env"]["TOKEN"],
+            "value-for-bound-only"
+        );
         assert!(written["mcpServers"]["other"].get("env").is_none());
 
         delete_secret_at(&vault_path, &secret_name).expect("cleanup delete_secret");
@@ -535,8 +584,14 @@ mod tests {
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
 
-        assert_eq!(written["mcpServers"]["mcp-a"]["env"]["SHARED_TOKEN"], "rotated-value");
-        assert_eq!(written["mcpServers"]["mcp-b"]["env"]["SHARED_TOKEN"], "rotated-value");
+        assert_eq!(
+            written["mcpServers"]["mcp-a"]["env"]["SHARED_TOKEN"],
+            "rotated-value"
+        );
+        assert_eq!(
+            written["mcpServers"]["mcp-b"]["env"]["SHARED_TOKEN"],
+            "rotated-value"
+        );
         // mínimo privilegio: mcp-c nunca recibió el secreto.
         assert!(written["mcpServers"]["mcp-c"].get("env").is_none());
 
@@ -565,7 +620,9 @@ mod tests {
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
 
-        assert!(written["mcpServers"]["srv"]["env"].get("TO_REMOVE").is_none());
+        assert!(written["mcpServers"]["srv"]["env"]
+            .get("TO_REMOVE")
+            .is_none());
         // Otras claves de env que no vienen del vault se preservan.
         assert_eq!(written["mcpServers"]["srv"]["env"]["KEEP_ME"], "1");
 
@@ -594,8 +651,11 @@ mod tests {
     #[serial_test::serial(vault_real_file)]
     fn upsert_on_mcp_with_binding_injects_vault_value() {
         let project_dir = tempfile::tempdir().expect("tempdir proyecto");
-        std::fs::write(project_dir.path().join(".mcp.json"), r#"{"mcpServers": {}}"#)
-            .expect("setup .mcp.json");
+        std::fs::write(
+            project_dir.path().join(".mcp.json"),
+            r#"{"mcpServers": {}}"#,
+        )
+        .expect("setup .mcp.json");
 
         let secret_name = spike_secret_name("upsert-aware");
         let mcp_name = format!("srv-{secret_name}");
@@ -619,7 +679,10 @@ mod tests {
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
 
-        assert_eq!(written["mcpServers"][&mcp_name]["env"]["API_KEY"], "upsert-value");
+        assert_eq!(
+            written["mcpServers"][&mcp_name]["env"]["API_KEY"],
+            "upsert-value"
+        );
         assert_eq!(written["mcpServers"][&mcp_name]["args"][0], "run");
 
         delete_secret(&secret_name).expect("cleanup delete_secret");

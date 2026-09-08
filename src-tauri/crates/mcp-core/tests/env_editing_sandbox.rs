@@ -78,7 +78,11 @@ fn read_and_surgically_edit_env_under_sandbox() {
     assert_eq!(written["coworkUserFilesPath"], "/keep/me");
 
     // 3. Se generó un backup bajo <root>/home/.mcp-manager/backups/.
-    let backups = root.path().join("home").join(".mcp-manager").join("backups");
+    let backups = root
+        .path()
+        .join("home")
+        .join(".mcp-manager")
+        .join("backups");
     assert!(
         backups.exists(),
         "debería existir el directorio de backups del sandbox"

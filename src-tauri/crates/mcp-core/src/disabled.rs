@@ -64,15 +64,15 @@ fn read_all_at(path: &Path) -> Result<Map<String, Value>, WriteError> {
 /// peor caso es perder el registro de qué estaba deshabilitado, nunca
 /// dañar un config real de otra app.
 fn write_all_at(path: &Path, entries: &Map<String, Value>) -> Result<(), WriteError> {
-    let serialized =
-        serde_json::to_string_pretty(entries).map_err(|e| WriteError::Serialize {
-            message: e.to_string(),
-        })?;
+    let serialized = serde_json::to_string_pretty(entries).map_err(|e| WriteError::Serialize {
+        message: e.to_string(),
+    })?;
 
-    std::fs::write(path, serialized).map_err(|source| WriteError::Io {
-        path: path.display().to_string(),
-        source,
-    })
+    // Atómico (tmp + rename), aunque sin el backup timestampeado: este
+    // sidecar guarda el ÚNICO ejemplar del config de cada MCP
+    // deshabilitado, así que una escritura truncada los perdería todos de
+    // golpe.
+    crate::safe_write::atomic_write(path, &serialized)
 }
 
 /// Mueve la entrada `target` del config real al sidecar de deshabilitados:
@@ -184,6 +184,86 @@ fn enable_with_sidecar(sidecar_path: &Path, target: &McpTarget) -> Result<(), Wr
         MutationAction::Enable,
         target.name.clone(),
         backup_path.map(|p| p.display().to_string()),
+    );
+    let _ = changelog::append(log);
+
+    Ok(())
+}
+
+/// ¿Está esta entrada en el sidecar de deshabilitados? Lo usa el
+/// orquestador del rename para decidir si tiene que re-keyear el config
+/// real o el sidecar: un MCP deshabilitado no existe en el config ajeno.
+pub fn contains(target: &McpTarget) -> Result<bool, WriteError> {
+    contains_at(&disabled_file()?, target)
+}
+
+fn contains_at(sidecar_path: &Path, target: &McpTarget) -> Result<bool, WriteError> {
+    Ok(read_all_at(sidecar_path)?.contains_key(&sidecar_key(target)))
+}
+
+/// Re-keyea una entrada deshabilitada a `new_name`, preservando su
+/// `config` verbatim.
+///
+/// No toca ningún config ajeno (la entrada no vive ahí mientras está
+/// deshabilitada): solo reescribe el sidecar, de forma que al habilitarla
+/// más tarde se reinserte con el nombre nuevo.
+pub fn rename(target: &McpTarget, new_name: &str) -> Result<(), WriteError> {
+    rename_with_sidecar(&disabled_file()?, target, new_name)
+}
+
+fn rename_with_sidecar(
+    sidecar_path: &Path,
+    target: &McpTarget,
+    new_name: &str,
+) -> Result<(), WriteError> {
+    mutations::valid_mcp_name(new_name)?;
+
+    let mut entries = read_all_at(sidecar_path)?;
+
+    let key = sidecar_key(target);
+    let entry_value = entries
+        .remove(&key)
+        .ok_or_else(|| WriteError::TargetNotFound {
+            message: format!(
+                "no se encontró '{}' entre los MCPs deshabilitados",
+                target.name
+            ),
+        })?;
+
+    let mut entry: DisabledEntry =
+        serde_json::from_value(entry_value).map_err(|e| WriteError::Validation {
+            path: sidecar_path.display().to_string(),
+            message: e.to_string(),
+        })?;
+
+    let mut renamed_target = target.clone();
+    renamed_target.name = new_name.to_string();
+    let new_key = sidecar_key(&renamed_target);
+
+    if new_key != key && entries.contains_key(&new_key) {
+        return Err(WriteError::Conflict {
+            path: sidecar_path.display().to_string(),
+            message: format!("ya existe un MCP deshabilitado llamado '{new_name}'"),
+        });
+    }
+
+    entry.name = new_name.to_string();
+    entries.insert(
+        new_key,
+        serde_json::to_value(&entry).map_err(|e| WriteError::Serialize {
+            message: e.to_string(),
+        })?,
+    );
+    write_all_at(sidecar_path, &entries)?;
+
+    let file_path = mutations::resolve_target_path(target)?;
+    let log = crate::changelog::MutationLog::new(
+        target.app,
+        target.scope,
+        file_path.display().to_string(),
+        MutationAction::Rename,
+        format!("{} → {}", target.name, new_name),
+        None,
     );
     let _ = changelog::append(log);
 
